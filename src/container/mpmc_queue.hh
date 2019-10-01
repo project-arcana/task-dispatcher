@@ -9,19 +9,19 @@ namespace td::container
 // Alloc-free MPMC queue, ~75 cycles per enqueue and dequeue
 // http://www.1024cores.net/home/lock-free-algorithms/queues/bounded-mpmc-queue
 template <typename T>
-class mpmc_queue
+class MPMCQueue
 {
 public:
-    mpmc_queue(size_t buffer_size) : _buffer(new cell_t[buffer_size]), buffer_mask_(buffer_size - 1)
+    MPMCQueue(size_t buffer_size) : _buffer(new cell_t[buffer_size]), buffer_mask_(buffer_size - 1)
     {
-        //KW_DEBUG_PANIC_IF((buffer_size < 2) || ((buffer_size & (buffer_size - 1)) != 0), "mpmc_queue size not a power of two");
+        // KW_DEBUG_PANIC_IF((buffer_size < 2) || ((buffer_size & (buffer_size - 1)) != 0), "mpmc_queue size not a power of two");
         for (size_t i = 0; i != buffer_size; i += 1)
             _buffer[i].sequence_.store(i, std::memory_order_relaxed);
         _enqueue_pos.store(0, std::memory_order_relaxed);
         _dequeue_pos.store(0, std::memory_order_relaxed);
     }
 
-    ~mpmc_queue() { delete[] _buffer; }
+    ~MPMCQueue() { delete[] _buffer; }
 
     bool enqueue(const T& data)
     {
@@ -84,9 +84,9 @@ private:
     alignas(system::l1_cacheline_size) std::atomic<size_t> _enqueue_pos;
     alignas(system::l1_cacheline_size) std::atomic<size_t> _dequeue_pos;
 
-    mpmc_queue(mpmc_queue const& other) = delete;
-    mpmc_queue(mpmc_queue&& other) noexcept = delete;
-    mpmc_queue& operator=(mpmc_queue const& other) = delete;
-    mpmc_queue& operator=(mpmc_queue&& other) noexcept = delete;
+    MPMCQueue(MPMCQueue const& other) = delete;
+    MPMCQueue(MPMCQueue&& other) noexcept = delete;
+    MPMCQueue& operator=(MPMCQueue const& other) = delete;
+    MPMCQueue& operator=(MPMCQueue&& other) noexcept = delete;
 };
 }

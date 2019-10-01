@@ -6,11 +6,11 @@
 #include "native/fiber.hh"
 #include "native/thread.hh"
 
-thread_local td::scheduler* td::scheduler::s_current_scheduler = nullptr;
+thread_local td::Scheduler* td::Scheduler::s_current_scheduler = nullptr;
 
 namespace td
 {
-struct scheduler::atomic_counter_t
+struct Scheduler::atomic_counter_t
 {
     struct waiting_fiber_t
     {
@@ -34,17 +34,17 @@ struct scheduler::atomic_counter_t
             free_waiting_slots[i].store(true);
     }
 
-    friend scheduler;
+    friend td::Scheduler;
 };
 
-enum class scheduler::fiber_destination_e : uint8_t
+enum class Scheduler::fiber_destination_e : uint8_t
 {
     none,
     waiting,
     pool
 };
 
-struct scheduler::worker_fiber_t
+struct Scheduler::worker_fiber_t
 {
     native::fiber_t native;
 
@@ -53,7 +53,7 @@ struct scheduler::worker_fiber_t
     std::atomic_bool is_waiting_cleaned_up{false};
 };
 
-struct scheduler::tls_t
+struct Scheduler::tls_t
 {
     native::fiber_t thread_fiber; // thread fiber, not part of scheduler::_fibers
 
@@ -67,22 +67,22 @@ struct scheduler::tls_t
 
 namespace
 {
-thread_local td::scheduler::tls_t s_tls;
+thread_local td::Scheduler::tls_t s_tls;
 }
 
 namespace td
 {
-struct scheduler::callback_funcs
+struct Scheduler::callback_funcs
 {
     struct primary_fiber_arg_t
     {
-        scheduler* owning_scheduler;
+        Scheduler* owning_scheduler;
         container::Task main_job;
     };
 
     static TD_NATIVE_THREAD_FUNC_DECL worker_func(void* arg_void)
     {
-        scheduler* scheduler = static_cast<class scheduler*>(arg_void);
+        Scheduler* scheduler = static_cast<class td::Scheduler*>(arg_void);
         scheduler->s_current_scheduler = scheduler;
 
         // Set up thread fiber
@@ -103,7 +103,7 @@ struct scheduler::callback_funcs
 
     static void fiber_func(void* arg_void)
     {
-        scheduler* scheduler = static_cast<class scheduler*>(arg_void);
+        Scheduler* scheduler = static_cast<class td::Scheduler*>(arg_void);
         scheduler->clean_up_prev_fiber();
 
         container::Task job;
@@ -148,7 +148,7 @@ struct scheduler::callback_funcs
 };
 }
 
-td::scheduler::fiber_index_t td::scheduler::acquire_free_fiber()
+td::Scheduler::fiber_index_t td::Scheduler::acquire_free_fiber()
 {
     fiber_index_t res;
     for (auto attempt = 0;; ++attempt)
@@ -161,7 +161,7 @@ td::scheduler::fiber_index_t td::scheduler::acquire_free_fiber()
     }
 }
 
-td::scheduler::counter_index_t td::scheduler::acquire_free_counter()
+td::Scheduler::counter_index_t td::Scheduler::acquire_free_counter()
 {
     counter_index_t free_counter;
     auto success = _free_counters.dequeue(free_counter);
@@ -170,7 +170,7 @@ td::scheduler::counter_index_t td::scheduler::acquire_free_counter()
     return free_counter;
 }
 
-void td::scheduler::yield_to_fiber(td::scheduler::fiber_index_t target_fiber, td::scheduler::fiber_destination_e own_destination)
+void td::Scheduler::yield_to_fiber(td::Scheduler::fiber_index_t target_fiber, td::Scheduler::fiber_destination_e own_destination)
 {
     s_tls.previous_fiber_index = s_tls.current_fiber_index;
     s_tls.previous_fiber_dest = own_destination;
@@ -186,7 +186,7 @@ void td::scheduler::yield_to_fiber(td::scheduler::fiber_index_t target_fiber, td
     clean_up_prev_fiber();
 }
 
-void td::scheduler::clean_up_prev_fiber()
+void td::Scheduler::clean_up_prev_fiber()
 {
     switch (s_tls.previous_fiber_dest)
     {
@@ -207,7 +207,7 @@ void td::scheduler::clean_up_prev_fiber()
     s_tls.previous_fiber_dest = fiber_destination_e::none;
 }
 
-bool td::scheduler::get_next_job(td::container::Task& job)
+bool td::Scheduler::get_next_job(td::container::Task& job)
 {
     // Sleeping fibers with jobs that had their dependencies resolved in the meantime
     // have the highest priority
@@ -247,7 +247,7 @@ bool td::scheduler::get_next_job(td::container::Task& job)
     return _jobs.dequeue(job);
 }
 
-bool td::scheduler::counter_add_waiting_fiber(td::scheduler::atomic_counter_t& counter, fiber_index_t fiber_index, uint32_t counter_target)
+bool td::Scheduler::counter_add_waiting_fiber(td::Scheduler::atomic_counter_t& counter, fiber_index_t fiber_index, uint32_t counter_target)
 {
     for (auto i = 0u; i < atomic_counter_t::max_waiting; ++i)
     {
@@ -286,7 +286,7 @@ bool td::scheduler::counter_add_waiting_fiber(td::scheduler::atomic_counter_t& c
     return false;
 }
 
-void td::scheduler::counter_check_waiting_fibers(td::scheduler::atomic_counter_t& counter, uint32_t value)
+void td::Scheduler::counter_check_waiting_fibers(td::Scheduler::atomic_counter_t& counter, uint32_t value)
 {
     // Go over each waiting fiber slot
     for (auto i = 0u; i < atomic_counter_t::max_waiting; ++i)
@@ -327,19 +327,19 @@ void td::scheduler::counter_check_waiting_fibers(td::scheduler::atomic_counter_t
     }
 }
 
-void td::scheduler::counter_increment(td::scheduler::atomic_counter_t& counter, uint32_t amount)
+void td::Scheduler::counter_increment(td::Scheduler::atomic_counter_t& counter, uint32_t amount)
 {
     auto previous = counter.count.fetch_add(amount);
     counter_check_waiting_fibers(counter, previous + amount);
 }
 
-void td::scheduler::counter_decrement(td::scheduler::atomic_counter_t& counter, uint32_t amount)
+void td::Scheduler::counter_decrement(td::Scheduler::atomic_counter_t& counter, uint32_t amount)
 {
     auto previous = counter.count.fetch_sub(amount);
     counter_check_waiting_fibers(counter, previous - amount);
 }
 
-td::scheduler::scheduler(scheduler_config_t const& config)
+td::Scheduler::Scheduler(scheduler_config const& config)
   : _fiber_stack_size(config.fiber_stack_size),
     _num_threads(static_cast<thread_index_t>(config.num_threads)),
     _num_fibers(static_cast<fiber_index_t>(config.num_fibers)),
@@ -358,7 +358,7 @@ td::scheduler::scheduler(scheduler_config_t const& config)
     static_assert(invalid_counter == std::numeric_limits<counter_index_t>().max(), "Invalid counter index corrupt");
 }
 
-void td::scheduler::run_jobs(td::container::Task* jobs, uint32_t num_jobs, td::sync& sync)
+void td::Scheduler::submitTasks(td::container::Task* jobs, uint32_t num_jobs, td::sync& sync)
 {
     counter_index_t counter_index;
     if (sync.initialized)
@@ -389,7 +389,7 @@ void td::scheduler::run_jobs(td::container::Task* jobs, uint32_t num_jobs, td::s
 //    KW_PANIC_IF(!success, "Job queue is full, consider increasing config.max_num_jobs");
 }
 
-void td::scheduler::wait(td::sync& sync, uint32_t target)
+void td::Scheduler::wait(td::sync& sync, uint32_t target)
 {
     // Skip uninitialized sync handles
     if (!sync.initialized)
@@ -398,7 +398,7 @@ void td::scheduler::wait(td::sync& sync, uint32_t target)
         return;
     }
 
-    if (_counter_handles.is_expired(sync.handle))
+    if (_counter_handles.isExpired(sync.handle))
     {
 //        KW_PANIC_IF(true, "Attempted to wait on an expired sync, consider increasing scheduler::max_handles_in_flight");
     }
@@ -431,7 +431,7 @@ void td::scheduler::wait(td::sync& sync, uint32_t target)
     }
 }
 
-void td::scheduler::start(td::container::Task main_task)
+void td::Scheduler::start(td::container::Task main_task)
 {
     _threads = new native::thread_t[_num_threads];
     _fibers = new worker_fiber_t[_num_fibers];

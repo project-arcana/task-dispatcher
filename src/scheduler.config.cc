@@ -2,14 +2,14 @@
 
 #include <common/math_intrin.hh>
 
-void td::scheduler_config_t::ceil_to_pow2()
+void td::scheduler_config::ceil_to_pow2()
 {
     num_fibers = math::nextpow2(num_fibers);
     max_num_counters = math::nextpow2(max_num_counters);
     max_num_jobs = math::nextpow2(max_num_jobs);
 }
 
-bool td::scheduler_config_t::is_valid() const
+bool td::scheduler_config::is_valid() const
 {
     auto const nonzero = [](auto v) -> bool { return v != 0; };
 
@@ -27,14 +27,14 @@ bool td::scheduler_config_t::is_valid() const
     valid &= math::ispow2(max_num_jobs);
 
     // Invalid number of fibers, threads or counters
-    valid &= bool(num_fibers < scheduler::invalid_fiber);
-    valid &= bool(num_threads < scheduler::invalid_thread);
-    valid &= bool(max_num_counters < scheduler::invalid_counter);
+    valid &= bool(num_fibers < Scheduler::invalid_fiber);
+    valid &= bool(num_threads < Scheduler::invalid_thread);
+    valid &= bool(max_num_counters < Scheduler::invalid_counter);
 
     return valid;
 }
 
-bool td::scheduler_config_t::validate()
+bool td::scheduler_config::validate()
 {
     ceil_to_pow2();
     return is_valid();

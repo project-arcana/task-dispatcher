@@ -8,12 +8,12 @@
 namespace td
 {
 template <class F>
-void launch(td::scheduler_config_t config, F&& func)
+void launch(td::scheduler_config config, F&& func)
 {
-    if (td::scheduler::inside_scheduler())
+    if (td::Scheduler::isInsideScheduler())
         return;
 
-    td::scheduler scheduler(config);
+    td::Scheduler scheduler(config);
     container::Task mainTask;
     mainTask.lambda(std::forward<F>(func));
     scheduler.start(mainTask);
@@ -22,10 +22,10 @@ void launch(td::scheduler_config_t config, F&& func)
 template <class F>
 void launch(F&& func)
 {
-    if (td::scheduler::inside_scheduler())
+    if (td::Scheduler::isInsideScheduler())
         return;
 
-    td::scheduler scheduler;
+    td::Scheduler scheduler;
     container::Task mainTask;
     mainTask.lambda(std::forward<F>(func));
     scheduler.start(mainTask);
@@ -36,7 +36,7 @@ td::sync submit(F&& func)
 {
     td::sync res;
     container::Task dispatch(std::forward<F>(func));
-    td::scheduler::current().run_jobs(&dispatch, 1, res);
+    td::Scheduler::current().submitTasks(&dispatch, 1, res);
     return res;
 }
 
@@ -44,7 +44,7 @@ template <class F>
 void submit(td::sync& sync, F&& func)
 {
     container::Task dispatch(std::forward<F>(func));
-    td::scheduler::current().run_jobs(&dispatch, 1, sync);
+    td::Scheduler::current().submitTasks(&dispatch, 1, sync);
 }
 
 template <class F>
@@ -55,14 +55,26 @@ void submit_n(td::sync& sync, F&& func, unsigned n)
     {
         tasks[i].lambda([i, func]() { func(i); });
     }
-    td::scheduler::current().run_jobs(tasks, n, sync);
+    td::Scheduler::current().submitTasks(tasks, n, sync);
 }
 
+template <class F>
+td::sync submit_n(F&& func, unsigned n)
+{
+    td::sync res;
+    auto tasks = new td::container::Task[n];
+    for (auto i = 0u; i < n; ++i)
+    {
+        tasks[i].lambda([i, func]() { func(i); });
+    }
+    td::Scheduler::current().submitTasks(tasks, n, res);
+    return res;
+}
+
+inline bool scheduler_alive() { return td::Scheduler::isInsideScheduler(); }
+
 // TODO
-// inline void wait_for(td::sync& sync) {
-
-//}
-
-inline void wait_for_unpinned(td::sync& sync) { td::scheduler::current().wait(sync); }
+// inline void wait_for(td::sync& sync) {}
+inline void wait_for_unpinned(td::sync& sync) { td::Scheduler::current().wait(sync); }
 
 }

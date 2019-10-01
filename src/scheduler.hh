@@ -1,9 +1,8 @@
 #pragma once
 
 #include <atomic>
-#include <cstdint>
-
 #include <common/system_info.hh>
+#include <cstdint>
 
 #include "container/mpmc_queue.hh"
 #include "container/task.hh"
@@ -18,7 +17,7 @@ struct thread_t;
 struct fiber_t;
 }
 
-struct scheduler_config_t
+struct scheduler_config
 {
     uint32_t num_fibers = 128;
     uint32_t num_threads = system::hardware_concurrency;
@@ -42,29 +41,29 @@ struct scheduler_config_t
 // Never throws or behaves erroneously, crashes immediately on any fatal error
 // ::run_jobs and ::wait must only be called from scheduler tasks
 // td::sync objects passed to ::run_jobs must eventually be waited upon using ::wait
-class scheduler
+class Scheduler
 {
 public:
     struct tls_t;
 
 public:
-    explicit scheduler(scheduler_config_t const& config = scheduler_config_t());
+    explicit Scheduler(scheduler_config const& config = scheduler_config());
 
     // Launch the scheduler with the given main task
     void start(container::Task main_task);
 
     // Enqueue the given tasks and associate them with a sync object
-    void run_jobs(container::Task* jobs, uint32_t num_jobs, td::sync& sync);
+    void submitTasks(container::Task* jobs, uint32_t num_jobs, td::sync& sync);
     // Resume execution after the given sync object has reached a set target
     void wait(td::sync& sync, uint32_t target = 0);
 
     // The scheduler running the current task
-    static scheduler& current() { return *s_current_scheduler; }
+    static Scheduler& current() { return *s_current_scheduler; }
     // Returns true if called from inside the scheduler
-    static bool inside_scheduler() { return s_current_scheduler != nullptr; }
+    static bool isInsideScheduler() { return s_current_scheduler != nullptr; }
 
 private:
-    static thread_local scheduler* s_current_scheduler;
+    static thread_local Scheduler* s_current_scheduler;
 
 private:
     using fiber_index_t = uint16_t;
@@ -96,20 +95,20 @@ private:
     counter_index_t const _num_counters;
 
     // Queues
-    container::mpmc_queue<container::Task> _jobs;
-    container::mpmc_queue<fiber_index_t> _idle_fibers;
-    container::mpmc_queue<fiber_index_t> _resumable_fibers;
-    container::mpmc_queue<counter_index_t> _free_counters;
+    container::MPMCQueue<container::Task> _jobs;
+    container::MPMCQueue<fiber_index_t> _idle_fibers;
+    container::MPMCQueue<fiber_index_t> _resumable_fibers;
+    container::MPMCQueue<counter_index_t> _free_counters;
 
     // User handles
     static auto constexpr max_handles_in_flight = 512;
-    container::version_ring<counter_index_t, max_handles_in_flight> _counter_handles;
+    container::VersionRing<counter_index_t, max_handles_in_flight> _counter_handles;
 
 private:
     // Callbacks, wrapped into a friend struct for member access
     struct callback_funcs;
     friend struct callback_funcs;
-    friend struct scheduler_config_t;
+    friend struct scheduler_config;
 
 private:
     fiber_index_t acquire_free_fiber();
@@ -126,10 +125,10 @@ private:
     void counter_increment(atomic_counter_t& counter, uint32_t amount = 1);
     void counter_decrement(atomic_counter_t& counter, uint32_t amount = 1);
 
-    scheduler(scheduler const& other) = delete;
-    scheduler(scheduler&& other) noexcept = delete;
-    scheduler& operator=(scheduler const& other) = delete;
-    scheduler& operator=(scheduler&& other) noexcept = delete;
+    Scheduler(Scheduler const& other) = delete;
+    Scheduler(Scheduler&& other) noexcept = delete;
+    Scheduler& operator=(Scheduler const& other) = delete;
+    Scheduler& operator=(Scheduler&& other) noexcept = delete;
 };
 
 }
