@@ -7,6 +7,8 @@
 
 namespace td
 {
+// == launch ==
+
 template <class F>
 void launch(td::scheduler_config config, F&& func)
 {
@@ -31,14 +33,7 @@ void launch(F&& func)
     scheduler.start(mainTask);
 }
 
-template <class F>
-td::sync submit(F&& func)
-{
-    td::sync res;
-    container::Task dispatch(std::forward<F>(func));
-    td::Scheduler::current().submitTasks(&dispatch, 1, res);
-    return res;
-}
+// == submit ==
 
 template <class F>
 void submit(td::sync& sync, F&& func)
@@ -58,6 +53,17 @@ void submit_n(td::sync& sync, F&& func, unsigned n)
     td::Scheduler::current().submitTasks(tasks, n, sync);
 }
 
+// == sync return submit variants ==
+
+template <class F>
+td::sync submit(F&& func)
+{
+    td::sync res;
+    container::Task dispatch(std::forward<F>(func));
+    td::Scheduler::current().submitTasks(&dispatch, 1, res);
+    return res;
+}
+
 template <class F>
 td::sync submit_n(F&& func, unsigned n)
 {
@@ -71,10 +77,15 @@ td::sync submit_n(F&& func, unsigned n)
     return res;
 }
 
-inline bool scheduler_alive() { return td::Scheduler::isInsideScheduler(); }
+// == wait ==
 
 // TODO
 // inline void wait_for(td::sync& sync) {}
 inline void wait_for_unpinned(td::sync& sync) { td::Scheduler::current().wait(sync); }
+
+
+// == getter / misc ==
+
+inline bool scheduler_alive() { return td::Scheduler::isInsideScheduler(); }
 
 }
