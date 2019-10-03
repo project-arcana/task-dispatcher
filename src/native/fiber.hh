@@ -5,6 +5,7 @@
 #include <cstdint>
 #include <cstdlib>
 
+#include <common/panic.hh>
 #include <common/win32_sanitized.hh>
 
 #else
@@ -18,6 +19,7 @@
 #include <sys/times.h>
 #include <ucontext.h>
 #include <unistd.h>
+
 #include <cstdint>
 #include <cstring>
 
@@ -28,15 +30,9 @@ namespace td::native
 // malloc passthrough, might want to capitalize on this later
 struct allocator
 {
-    void* alloc(size_t size)
-    {
-        return ::malloc(size);
-    }
+    void* alloc(size_t size) { return ::malloc(size); }
 
-    void free(void* block)
-    {
-        return ::free(block);
-    }
+    void free(void* block) { return ::free(block); }
 };
 
 inline auto constexpr default_alloc = allocator{};
@@ -49,48 +45,30 @@ struct fiber_t
     void* native;
 };
 
-inline uint64_t get_tick_count()
-{
-    return ::GetTickCount64();
-}
+inline uint64_t get_tick_count() { return ::GetTickCount64(); }
 
-inline void set_low_thread_prio()
-{
-    ::SetThreadPriority(::GetCurrentThread(), THREAD_PRIORITY_BELOW_NORMAL);
-}
+inline void set_low_thread_prio() { ::SetThreadPriority(::GetCurrentThread(), THREAD_PRIORITY_BELOW_NORMAL); }
 
 inline void create_main_fiber(fiber_t& fib)
 {
     fib.native = ::ConvertThreadToFiber(nullptr);
-   // KW_DEBUG_PANIC_IF(fib.native == nullptr, "Thread to fiber conversion failed");
+    TD_DEBUG_PANIC_IF(fib.native == nullptr, "Thread to fiber conversion failed");
 }
 
-inline void delete_main_fiber(fiber_t&)
-{
-    ::ConvertFiberToThread();
-}
+inline void delete_main_fiber(fiber_t&) { ::ConvertFiberToThread(); }
 
 inline void create_fiber(fiber_t& fib, void (*fiber_proc)(void*), void* ctx, size_t stack_size, allocator const& = default_alloc)
 {
     fib.native = ::CreateFiber(stack_size, static_cast<LPFIBER_START_ROUTINE>(fiber_proc), ctx);
-    // KW_DEBUG_PANIC_IF(fib.native == nullptr, "Fiber creation failed");
+    TD_DEBUG_PANIC_IF(fib.native == nullptr, "Fiber creation failed");
 }
 
-inline void delete_fiber(fiber_t& fib, allocator const& = default_alloc)
-{
-    ::DeleteFiber(fib.native);
-}
+inline void delete_fiber(fiber_t& fib, allocator const& = default_alloc) { ::DeleteFiber(fib.native); }
 
-inline void switch_to_fiber(fiber_t fib, fiber_t)
-{
-    ::SwitchToFiber(fib.native);
-}
+inline void switch_to_fiber(fiber_t fib, fiber_t) { ::SwitchToFiber(fib.native); }
 
 // work-around for some versions of cygwin
-extern "C" inline int __gxx_personality_v0()
-{
-    return 0;
-}
+extern "C" inline int __gxx_personality_v0() { return 0; }
 
 #else
 // Fiber API avoiding naive ucontext performance pitfalls for unix
@@ -132,10 +110,7 @@ static void fiber_start_fnc(void* p)
     ufnc(uctx);
 }
 
-inline void create_main_fiber(fiber_t& fib)
-{
-    memset(&fib, 0, sizeof(fib));
-}
+inline void create_main_fiber(fiber_t& fib) { memset(&fib, 0, sizeof(fib)); }
 
 inline void delete_main_fiber(fiber_t&)
 {
@@ -154,10 +129,7 @@ inline void create_fiber(fiber_t& fib, void (*ufnc)(void*), void* uctx, size_t s
     swapcontext(&tmp, &fib.fib);
 }
 
-inline void delete_fiber(fiber_t& fib, allocator const& alloc = default_alloc)
-{
-    alloc.free(fib.fib.uc_stack.ss_sp);
-}
+inline void delete_fiber(fiber_t& fib, allocator const& alloc = default_alloc) { alloc.free(fib.fib.uc_stack.ss_sp); }
 
 inline void switch_to_fiber(fiber_t& fib, fiber_t& prv)
 {

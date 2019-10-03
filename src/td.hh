@@ -10,7 +10,7 @@ namespace td
 // == launch ==
 
 template <class F>
-void launch(scheduler_config config, F&& func)
+void launch(scheduler_config const& config, F&& func)
 {
     if (Scheduler::isInsideScheduler())
         return;
@@ -75,10 +75,21 @@ void submit_n(sync& sync, F&& func, unsigned n)
 {
     auto tasks = new container::Task[n];
     for (auto i = 0u; i < n; ++i)
-    {
-        tasks[i].lambda([i, func]() { func(i); });
-    }
+        tasks[i].lambda([=] { func(i); });
     Scheduler::current().submitTasks(tasks, n, sync);
+    delete[] tasks;
+}
+
+[[nodiscard]] sync submit_raw(container::Task* tasks, unsigned num)
+{
+    td::sync res;
+    td::Scheduler::current().submitTasks(tasks, num, res);
+    return res;
+}
+
+void submit_raw(sync& sync, container::Task* tasks, unsigned num)
+{
+    td::Scheduler::current().submitTasks(tasks, num, sync);
 }
 
 template <class F>
@@ -96,8 +107,9 @@ template <class F>
     sync res;
     auto tasks = new container::Task[n];
     for (auto i = 0u; i < n; ++i)
-        tasks[i].lambda([=]() { func(i); });
+        tasks[i].lambda([=] { func(i); });
     Scheduler::current().submitTasks(tasks, n, res);
+    delete[] tasks;
     return res;
 }
 
@@ -108,7 +120,7 @@ template <class F>
 inline void wait_for_unpinned(sync& sync) { Scheduler::current().wait(sync); }
 
 template <class... STs>
-void wait_for_unpinned(sync& s, sync& peek, STs&...tail)
+void wait_for_unpinned(sync& s, sync& peek, STs&... tail)
 {
     wait_for_unpinned(s);
     wait_for_unpinned(peek, tail...);

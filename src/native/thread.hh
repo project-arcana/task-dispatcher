@@ -7,6 +7,7 @@
 #include <atomic>
 
 #include <common/win32_sanitized.hh>
+#include <common/panic.hh>
 
 #include <process.h>
 
@@ -110,7 +111,7 @@ inline void wait_for_event(event_t& eventId, uint32_t milliseconds)
         ::ResetEvent(eventId.event);
     }
 
-    // KW_DEBUG_PANIC_IF(retval == WAIT_FAILED || prev == 0, "Failed to wait on native event");
+    TD_DEBUG_PANIC_IF(retval == WAIT_FAILED || prev == 0, "Failed to wait on native event");
 }
 
 inline void signal_event(event_t eventId)
