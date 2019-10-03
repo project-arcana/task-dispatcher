@@ -1,14 +1,23 @@
 #include <iostream>
 #include <td.hh>
 
+namespace
+{
+void argfun(int a, int b, int c) { printf("Argfun: %d %d %d \n", a, b, c); }
+}
+
 int main()
 {
     td::launch([] {
+
         auto s1 = td::submit([] { printf("Task 1\n"); });
+        td::submit(s1, [] { printf("Task 1 - append \n"); });
+        td::submit(s1, argfun, 1, 2, 3);
 
         td::wait_for_unpinned(s1);
 
         td::sync s2;
+
         td::submit(s2, [] {
             printf("Task 2 start \n");
 

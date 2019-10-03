@@ -3,6 +3,7 @@
 #include <cassert>
 #include <limits> // Only for sanity check static_asserts
 
+#include "common/panic.hh"
 #include "native/fiber.hh"
 #include "native/thread.hh"
 
@@ -127,7 +128,7 @@ struct Scheduler::callback_funcs
         // Switch back to thread fiber of the current thread
         native::switch_to_fiber(s_tls.thread_fiber, scheduler->_fibers[s_tls.current_fiber_index].native);
 
-        // KW_PANIC_IF(true, "Reached end of fiber_func");
+        TD_PANIC_IF(true, "Reached end of fiber_func");
     }
 
     static void primary_fiber_func(void* arg_void)
@@ -143,7 +144,7 @@ struct Scheduler::callback_funcs
         // Return to main thread fiber
         native::switch_to_fiber(s_tls.thread_fiber, arg.owning_scheduler->_fibers[s_tls.current_fiber_index].native);
 
-        // KW_PANIC_IF(true, "Reached end of primary_fiber_func");
+        TD_PANIC_IF(true, "Reached end of primary_fiber_func");
     }
 };
 }
@@ -165,7 +166,7 @@ td::Scheduler::counter_index_t td::Scheduler::acquire_free_counter()
 {
     counter_index_t free_counter;
     auto success = _free_counters.dequeue(free_counter);
-    // KW_PANIC_IF(!success, "No free counters available, consider increasing config.max_num_counters");
+    TD_PANIC_IF(!success, "No free counters available, consider increasing config.max_num_counters");
     _counters[free_counter].reset();
     return free_counter;
 }
@@ -176,8 +177,8 @@ void td::Scheduler::yield_to_fiber(td::Scheduler::fiber_index_t target_fiber, td
     s_tls.previous_fiber_dest = own_destination;
     s_tls.current_fiber_index = target_fiber;
 
-    //    KW_DEBUG_PANIC_IF(s_tls.previous_fiber_index == invalid_fiber || s_tls.current_fiber_index == invalid_fiber, "Switching to or from an invalid "
-    //                                                                                                                 "fiber");
+    TD_DEBUG_PANIC_IF(s_tls.previous_fiber_index == invalid_fiber || s_tls.current_fiber_index == invalid_fiber, "Switching to or from an invalid "
+                                                                                                                 "fiber");
     //    KW_LOG_DIAG("[yield_to_fiber] Switching from " << int(s_tls.previous_fiber_index) << " ("
     //                                                   << (own_destination == fiber_destination_e::pool ? "pooling" : "waiting") << ") to "
     //                                                   << int(s_tls.current_fiber_index));
@@ -282,7 +283,7 @@ bool td::Scheduler::counter_add_waiting_fiber(td::Scheduler::atomic_counter_t& c
     }
 
     // Panic if there is no space left in conter waiting_slots
-    //    KW_PANIC_IF(true, "Counter waiting slots are full");
+    TD_PANIC_IF(true, "Counter waiting slots are full");
     return false;
 }
 
@@ -319,7 +320,7 @@ void td::Scheduler::counter_check_waiting_fibers(td::Scheduler::atomic_counter_t
 
             // Panic if there is no space left in TLS ready_fibers
             // This should never happen
-            //            KW_PANIC_IF(!success, "_resumable_fibers full");
+            TD_PANIC_IF(!success, "_resumable_fibers full");
 
             // Free the slot
             counter.free_waiting_slots[i].store(true, std::memory_order_release);
@@ -349,8 +350,8 @@ td::Scheduler::Scheduler(scheduler_config const& config)
     _resumable_fibers(_num_fibers), // TODO: Smaller?
     _free_counters(config.max_num_counters)
 {
-    //    KW_PANIC_IF(!config.is_valid(), "Scheduler config invalid, use scheduler_config_t::validate()");
-    //    KW_PANIC_IF(config.num_threads > system::hardware_concurrency, "More threads than physical cores configured");
+    TD_PANIC_IF(!config.is_valid(), "Scheduler config invalid, use scheduler_config_t::validate()");
+    TD_PANIC_IF(config.num_threads > system::hardware_concurrency, "More threads than physical cores configured");
 
     static_assert(ATOMIC_INT_LOCK_FREE == 2 && ATOMIC_BOOL_LOCK_FREE == 2, "No lock-free atomics available on this platform");
     static_assert(invalid_fiber == std::numeric_limits<fiber_index_t>().max(), "Invalid fiber index corrupt");
@@ -364,8 +365,8 @@ void td::Scheduler::submitTasks(td::container::Task* jobs, uint32_t num_jobs, td
     if (sync.initialized)
     {
         // Initialized handle, read its counter index
-//        KW_PANIC_IF(_counter_handles.is_expired(sync.handle), "Attempted to run jobs using an expired sync, consider increasing "
-//                                                              "scheduler::max_handles_in_flight");
+        TD_PANIC_IF(_counter_handles.isExpired(sync.handle), "Attempted to run jobs using an expired sync, consider increasing "
+                                                              "scheduler::max_handles_in_flight");
         counter_index = _counter_handles.get(sync.handle);
     }
     else
@@ -386,7 +387,7 @@ void td::Scheduler::submitTasks(td::container::Task* jobs, uint32_t num_jobs, td
         success &= _jobs.enqueue(jobs[i]);
     }
 
-//    KW_PANIC_IF(!success, "Job queue is full, consider increasing config.max_num_jobs");
+    TD_PANIC_IF(!success, "Job queue is full, consider increasing config.max_num_jobs");
 }
 
 void td::Scheduler::wait(td::sync& sync, uint32_t target)
@@ -394,13 +395,13 @@ void td::Scheduler::wait(td::sync& sync, uint32_t target)
     // Skip uninitialized sync handles
     if (!sync.initialized)
     {
-//        KW_LOG_DIAG("[wait] Waiting on uninitialized sync, resuming immediately");
+        //        KW_LOG_DIAG("[wait] Waiting on uninitialized sync, resuming immediately");
         return;
     }
 
     if (_counter_handles.isExpired(sync.handle))
     {
-//        KW_PANIC_IF(true, "Attempted to wait on an expired sync, consider increasing scheduler::max_handles_in_flight");
+        TD_PANIC_IF(true, "Attempted to wait on an expired sync, consider increasing scheduler::max_handles_in_flight");
     }
 
     auto const counter_index = _counter_handles.get(sync.handle);
@@ -411,12 +412,12 @@ void td::Scheduler::wait(td::sync& sync, uint32_t target)
     if (counter_add_waiting_fiber(_counters[counter_index], s_tls.current_fiber_index, target))
     {
         // Already done
-//        KW_LOG_DIAG("[wait] Wait for counter " << int(counter_index) << " is over early, resuming immediately");
+        //        KW_LOG_DIAG("[wait] Wait for counter " << int(counter_index) << " is over early, resuming immediately");
     }
     else
     {
         // Not already done, prepare to yield
-//        KW_LOG_DIAG("[wait] Waiting for counter " << int(counter_index) << ", yielding");
+        //        KW_LOG_DIAG("[wait] Waiting for counter " << int(counter_index) << ", yielding");
         yield_to_fiber(acquire_free_fiber(), fiber_destination_e::waiting);
     }
 
@@ -451,7 +452,7 @@ void td::Scheduler::start(td::container::Task main_task)
         // Create main fiber on this thread
         native::create_main_fiber(s_tls.thread_fiber);
 
-//        kw::dev::log::set_current_thread_index(0);
+        //        kw::dev::log::set_current_thread_index(0);
     }
 
     // Populate fiber pool
@@ -478,7 +479,7 @@ void td::Scheduler::start(td::container::Task main_task)
             auto constexpr thread_stack_overhead_safety = sizeof(void*) * 16;
             if (!native::create_thread(uint32_t(_fiber_stack_size) + thread_stack_overhead_safety, callback_funcs::worker_func, this, i, &thread))
             {
-                //      KW_PANIC_IF(true, "Failed to create worker thread");
+                TD_PANIC_IF(true, "Failed to create worker thread");
             }
         }
     }
