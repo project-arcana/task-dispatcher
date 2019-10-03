@@ -1,33 +1,35 @@
 #pragma once
 
-#include <common/system_info.hh>
 #include <cstdint>
 #include <utility> // std::move, std::forward, std::enable_if_t, std::is_invocable_r_v
+
+#include <common/panic.hh>
+#include <common/system_info.hh>
 
 namespace td::container
 {
 namespace detail
 {
-struct callable_wrapper
+struct CallableWrapper
 {
-    virtual ~callable_wrapper();
+    virtual ~CallableWrapper();
     virtual void call() = 0;
 };
 
 template <class T, std::enable_if_t<std::is_invocable_r_v<void, T>, int> = 0>
-struct lambda_wrapper final : callable_wrapper
+struct LambdaWrapper final : CallableWrapper
 {
-    explicit lambda_wrapper(T&& t) : lambda(std::move(t)) {}
-    void call() final override { lambda(); }
+    explicit LambdaWrapper(T&& t) : mLambda(std::move(t)) {}
+    void call() final override { mLambda(); }
 
 private:
-    T lambda;
+    T mLambda;
 };
 
-struct func_ptr_wrapper final : callable_wrapper
+struct FuncPtrWrapper final : CallableWrapper
 {
     using func_ptr_t = void (*)(void* userdata);
-    explicit func_ptr_wrapper(func_ptr_t func_ptr, void* userdata) : func_ptr(func_ptr), userdata(userdata) {}
+    explicit FuncPtrWrapper(func_ptr_t func_ptr, void* userdata) : func_ptr(func_ptr), userdata(userdata) {}
     void call() final override;
 
 private:
@@ -49,11 +51,11 @@ private:
     static auto constexpr task_size = td::system::l1_cacheline_size;
     static auto constexpr metadata_size = sizeof(default_metadata_t);
     static auto constexpr usable_buffer_size = task_size - metadata_size;
-    static_assert(sizeof(detail::func_ptr_wrapper) <= usable_buffer_size, "task is too small to hold func_ptr_wrapper");
+    static_assert(sizeof(detail::FuncPtrWrapper) <= usable_buffer_size, "task is too small to hold func_ptr_wrapper");
 
     union {
-        uint64_t first_qword = 0;
-        char buffer[task_size];
+        uint64_t mFirstQword = 0;
+        char mBuffer[task_size];
     };
 
 public:
@@ -69,7 +71,7 @@ public:
     }
 
     // From function pointer and userdata void*
-    explicit Task(detail::func_ptr_wrapper::func_ptr_t func_ptr, void* userdata = nullptr) { ptr(func_ptr, userdata); }
+    explicit Task(detail::FuncPtrWrapper::func_ptr_t func_ptr, void* userdata = nullptr) { ptr(func_ptr, userdata); }
 
 public:
     // == Deferred initialization ==
@@ -78,60 +80,60 @@ public:
     template <class T, std::enable_if_t<std::is_invocable_r_v<void, T>, int> = 0>
     void lambda(T&& l)
     {
-        // KW_DEBUG_PANIC_IF(is_valid(), "Re-initialized task");
-        static_assert(sizeof(detail::lambda_wrapper<T>) <= usable_buffer_size, "Lambda capture exceeds task buffer size");
-        new (static_cast<void*>(buffer)) detail::lambda_wrapper(std::forward<T>(l));
+        TD_DEBUG_PANIC_IF(isValid(), "Re-initialized task");
+        static_assert(sizeof(detail::LambdaWrapper<T>) <= usable_buffer_size, "Lambda capture exceeds task buffer size");
+        new (static_cast<void*>(mBuffer)) detail::LambdaWrapper(std::forward<T>(l));
     }
 
     // From function pointer and userdata void*
-    void ptr(detail::func_ptr_wrapper::func_ptr_t func_ptr, void* userdata = nullptr)
+    void ptr(detail::FuncPtrWrapper::func_ptr_t func_ptr, void* userdata = nullptr)
     {
-        // KW_DEBUG_PANIC_IF(is_valid(), "Re-initialized task");
-        new (static_cast<void*>(buffer)) detail::func_ptr_wrapper(func_ptr, userdata);
+        TD_DEBUG_PANIC_IF(isValid(), "Re-initialized task");
+        new (static_cast<void*>(mBuffer)) detail::FuncPtrWrapper(func_ptr, userdata);
     }
 
 public:
     // Write metadata into the reserved block
     template <class T = default_metadata_t>
-    void set_metadata(T data)
+    void setMetadata(T data)
     {
         static_assert(sizeof(T) <= sizeof(metadata_size), "Metadata too large");
-        *reinterpret_cast<T*>(static_cast<void*>(buffer + usable_buffer_size)) = data;
+        *reinterpret_cast<T*>(static_cast<void*>(mBuffer + usable_buffer_size)) = data;
     }
 
     // Read metadata from the reserved block
     template <class T = default_metadata_t>
-    T get_metadata() const
+    T getMetadata() const
     {
         static_assert(sizeof(T) <= sizeof(metadata_size), "Metadata too large");
-        return *reinterpret_cast<T const*>(static_cast<void const*>(buffer + usable_buffer_size));
+        return *reinterpret_cast<T const*>(static_cast<void const*>(mBuffer + usable_buffer_size));
     }
 
     // Execute the contained task
     void execute()
     {
-        // KW_DEBUG_PANIC_IF(!is_valid(), "Executed uninitialized task");
-        (*reinterpret_cast<detail::callable_wrapper*>(buffer)).call();
+        TD_DEBUG_PANIC_IF(!isValid(), "Executed uninitialized task");
+        (*reinterpret_cast<detail::CallableWrapper*>(mBuffer)).call();
     }
 
     // Clean up the possibly stored lambda, invalidating the task
     void cleanup()
     {
-        (*reinterpret_cast<detail::callable_wrapper*>(buffer)).~callable_wrapper();
+        (*reinterpret_cast<detail::CallableWrapper*>(mBuffer)).~CallableWrapper();
 #ifndef NDEBUG
         invalidate();
 #endif
     }
 
     // Execute the contained task and clean it up afterwards (invalidates task)
-    void execute_and_cleanup()
+    void executeAndCleanup()
     {
         execute();
         cleanup();
     }
 
 private:
-    bool is_valid() const { return first_qword != 0; }
-    void invalidate() { first_qword = 0; }
+    bool isValid() const { return mFirstQword != 0; }
+    void invalidate() { mFirstQword = 0; }
 };
 }

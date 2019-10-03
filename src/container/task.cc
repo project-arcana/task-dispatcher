@@ -1,8 +1,8 @@
 #include "task.hh"
 
-td::container::detail::callable_wrapper::~callable_wrapper() = default;
+td::container::detail::CallableWrapper::~CallableWrapper() = default;
 
-void td::container::detail::func_ptr_wrapper::call() { func_ptr(userdata); }
+void td::container::detail::FuncPtrWrapper::call() { func_ptr(userdata); }
 
 static_assert(sizeof(td::container::Task) == td::system::l1_cacheline_size, "Task exceeds cacheline size");
 

@@ -113,10 +113,10 @@ struct Scheduler::callback_funcs
             if (scheduler->get_next_job(job))
             {
                 // Received a job, execute it
-                job.execute_and_cleanup();
+                job.executeAndCleanup();
 
                 // The job returned, decrement the counter
-                scheduler->counter_decrement(scheduler->_counters[job.get_metadata()], 1);
+                scheduler->counter_decrement(scheduler->_counters[job.getMetadata()], 1);
             }
             else
             {
@@ -136,7 +136,7 @@ struct Scheduler::callback_funcs
         primary_fiber_arg_t& arg = *static_cast<primary_fiber_arg_t*>(arg_void);
 
         // Run main task
-        arg.main_job.execute_and_cleanup();
+        arg.main_job.executeAndCleanup();
 
         // Shut down
         arg.owning_scheduler->_shutting_down.store(true, std::memory_order_release);
@@ -383,7 +383,7 @@ void td::Scheduler::submitTasks(td::container::Task* jobs, uint32_t num_jobs, td
     bool success = true;
     for (auto i = 0u; i < num_jobs; ++i)
     {
-        jobs[i].set_metadata(counter_index);
+        jobs[i].setMetadata(counter_index);
         success &= _jobs.enqueue(jobs[i]);
     }
 
