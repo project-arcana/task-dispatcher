@@ -4,17 +4,35 @@
 namespace
 {
 void argfun(int a, int b, int c) { printf("Argfun: %d %d %d \n", a, b, c); }
+
+struct Foo
+{
+    void process_args(int a, int b) { printf("Foo process %d %d \n", a, b); }
+};
+
+template <class F, class FObj, class... Args>
+void execute(F&& func, FObj& inst, Args&&... args)
+{
+    (inst.*func)(args...);
+}
+
 }
 
 int main()
 {
     td::launch([] {
-
         auto s1 = td::submit([] { printf("Task 1\n"); });
         td::submit(s1, [] { printf("Task 1 - append \n"); });
         td::submit(s1, argfun, 1, 2, 3);
 
+        // TODO
+        //        Foo f;
+        //        td::submit(s1, &Foo::process_args, f, 15, 16);
+
         td::wait_for_unpinned(s1);
+
+        auto future1 = td::submit([] { return 5.f * 15.f; });
+        future1.get_unpinned();
 
         td::sync s2;
 
