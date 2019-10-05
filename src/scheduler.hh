@@ -19,10 +19,10 @@ struct fiber_t;
 
 struct scheduler_config
 {
-    uint32_t num_fibers = 128;
+    uint32_t num_fibers = 256;
     uint32_t num_threads = system::hardware_concurrency;
-    uint32_t max_num_counters = 128;
-    uint32_t max_num_jobs = 2048;
+    uint32_t max_num_counters = 512;
+    uint32_t max_num_jobs = 4096;
     size_t fiber_stack_size = 64 * 1024;
 
     // Some values in this config must be a power of 2
