@@ -2,6 +2,7 @@
 
 #include <memory>
 
+#include "common/panic.hh"
 #include "container/task.hh"
 #include "future.hh"
 #include "scheduler.hh"
@@ -9,6 +10,14 @@
 
 namespace td
 {
+// Divide ints and round up
+// a > 0, b > 0
+template <class T = int>
+constexpr T int_div_ceil(T a, T b)
+{
+    return 1 + ((a - 1) / b);
+}
+
 // == wait ==
 
 // TODO
@@ -25,7 +34,7 @@ void wait_for_unpinned(sync& s, sync& peek, STs&... tail)
 
 // == getter / misc ==
 
-inline bool scheduler_alive() { return Scheduler::isInsideScheduler(); }
+[[nodiscard]] inline bool scheduler_alive() { return Scheduler::isInsideScheduler(); }
 
 // Future - TODO: Rewrite
 template <class T>
@@ -37,24 +46,27 @@ private:
 
 public:
     // TODO
-    //    T get()  {
+    //    [[nodiscard]] T get()  {
     //        ::td::wait_for(mSync);
     //        return *mValue;
     //    }
 
-    T get_unpinned()
+    [[nodiscard]] T get_unpinned()
     {
         ::td::wait_for_unpinned(mSync);
         return *mValue;
     }
 
-    T* get_raw_pointer() const { return mValue.get(); }
+    [[nodiscard]] T* get_raw_pointer() const { return mValue.get(); }
 
-    future(sync s) : mSync(s), mValue(std::make_shared<T>()) {}
+    void set_sync(sync s) { mSync = s; }
+
+    future() : mValue(std::make_shared<T>()) {}
     ~future()
     {
         // Enforce sync guarantee
-        ::td::wait_for_unpinned(mSync);
+        if (mSync.initialized)
+            ::td::wait_for_unpinned(mSync);
     }
 
     future(future&) = delete;
@@ -66,13 +78,15 @@ public:
 // == launch ==
 
 template <class F>
-void launch(scheduler_config const& config, F&& func)
+void launch(scheduler_config& config, F&& func)
 {
     static_assert(std::is_invocable_v<F>, "function must be invocable without arguments");
     static_assert(std::is_same_v<std::invoke_result_t<F>, void>, "return must be void");
     if (Scheduler::isInsideScheduler())
         return;
 
+    config.ceil_to_pow2();
+    TD_PANIC_IF(!config.is_valid(), "Scheduler configuration invalid");
     Scheduler scheduler(config);
     container::Task mainTask;
     mainTask.lambda(std::forward<F>(func));
@@ -110,17 +124,17 @@ template <class F, class... Args>
     else
     {
         sync s;
-        auto res = future<R>{s};
+        future<R> res;
         R* const result_ptr = res.get_raw_pointer();
-
         container::Task dispatch([=] { *result_ptr = fun(args...); });
         Scheduler::current().submitTasks(&dispatch, 1, s);
+        res.set_sync(s);
         return res;
     }
 }
 
 template <class F, class... Args>
-auto submit(sync& s, F&& fun, Args&&... args)
+[[nodiscard]] auto submit(sync& s, F&& fun, Args&&... args)
 {
     static_assert(std::is_invocable_v<F, Args...>, "function must be invocable with the given args");
     static_assert(std::is_same_v<std::invoke_result_t<F, Args...>, void>, "return must be void");
@@ -161,6 +175,23 @@ void submit_n(sync& sync, F&& func, unsigned n)
     delete[] tasks;
 }
 
+template <class F>
+void submit_batched(sync& sync, F&& func, unsigned n, unsigned num_batches_target = td::system::hardware_concurrency * 4)
+{
+    static_assert(std::is_invocable_v<F, unsigned, unsigned>, "function must be invocable with batch start and end argument");
+    static_assert(std::is_same_v<std::invoke_result_t<F, unsigned, unsigned>, void>, "return must be void");
+    auto batch_size = int_div_ceil(n, num_batches_target);
+    auto num_batches = int_div_ceil(n, batch_size);
+    auto tasks = new container::Task[num_batches];
+
+    for (auto batch = 0u, batchStart = 0u, batchEnd = min(batch_size, n); batch < num_batches;
+         ++batch, batchStart = batch * batch_size, batchEnd = min((batch + 1) * batch_size, n))
+        tasks[batch].lambda([=] { func(batchStart, batchEnd); });
+
+    Scheduler::current().submitTasks(tasks, num_batches, sync);
+    delete[] tasks;
+}
+
 [[nodiscard]] sync submit_raw(container::Task* tasks, unsigned num)
 {
     td::sync res;
@@ -185,12 +216,11 @@ template <class F>
     else
     {
         sync s;
-        future<R> res{s};
+        future<R> res;
         R* const result_ptr = res.get_raw_pointer();
-
         container::Task dispatch([=] { *result_ptr = fun(); });
         Scheduler::current().submitTasks(&dispatch, 1, s);
-
+        res.set_sync(s);
         return res;
     }
 }
