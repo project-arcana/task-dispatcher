@@ -3,14 +3,13 @@
 #include <algorithm>
 #include <atomic>
 #include <memory>
-#include <optional>
 
 namespace td::container
 {
 // Chase-Lev workstealing queue/deque
 // MIT Licensed, from:
 // https://github.com/ssbl/concurrent-deque
-namespace detail::spmc
+namespace spmc
 {
 template <typename T>
 class Buffer
@@ -22,13 +21,7 @@ private:
     Buffer<T>* next;
 
 public:
-    Buffer(int ls, long id)
-    {
-        id_ = id;
-        log_size = ls;
-        segment = new T[1 << log_size];
-        next = nullptr;
-    }
+    Buffer(int ls, long id) : id_(id), log_size(ls), segment(new T[1 << log_size]), next(nullptr) {}
 
     ~Buffer() { delete[] segment; }
 
@@ -40,7 +33,7 @@ public:
 
     [[nodiscard]] T get(long i) const { return segment[i % size()]; }
 
-    void put(long i, T item) { segment[i % size()] = item; }
+    void put(long i, T const& item) { segment[i % size()] = item; }
 
     [[nodiscard]] Buffer<T>* resize(long b, long t, int delta)
     {
@@ -132,7 +125,7 @@ public:
         delete b;
     }
 
-    void push_bottom(const T object)
+    void push_bottom(const T& object)
     {
         auto b = bottom.load(std::memory_order_relaxed);
         auto t = top.load(std::memory_order_acquire);
@@ -156,7 +149,7 @@ public:
         bottom.store(b + 1, std::memory_order_relaxed);
     }
 
-    [[nodiscard]] std::optional<T> pop_bottom()
+    [[nodiscard]] bool pop_bottom(T& out_ref)
     {
         auto b = bottom.load(std::memory_order_relaxed);
         auto a = buffer.load(std::memory_order_acquire);
@@ -166,7 +159,7 @@ public:
         auto t = top.load(std::memory_order_relaxed);
 
         auto size = b - t;
-        std::optional<T> popped = {};
+        auto success = false;
 
         if (size <= 0)
         {
@@ -177,12 +170,16 @@ public:
         {
             // Race against steals.
             if (top.compare_exchange_strong(t, t + 1, std::memory_order_seq_cst, std::memory_order_relaxed))
-                popped = a->get(t);
+            {
+                out_ref = a->get(t);
+                success = true;
+            }
             bottom.store(b, std::memory_order_relaxed);
         }
         else
         {
-            popped = a->get(b - 1);
+            out_ref = a->get(b - 1);
+            success = true;
 
             if (size <= a->size() / 3 && size > 1 << log_initial_size)
             {
@@ -195,27 +192,29 @@ public:
                 reclaim_buffers(a);
         }
 
-        return popped;
+        return success;
     }
 
-    [[nodiscard]] std::optional<T> steal()
+    [[nodiscard]] bool steal(T& out_ref)
     {
         auto t = top.load(std::memory_order_acquire);
         std::atomic_thread_fence(std::memory_order_seq_cst);
         auto b = bottom.load(std::memory_order_acquire);
 
         int size = b - t;
-        std::optional<T> stolen = {};
 
         if (size > 0)
         {
             auto a = buffer.load(std::memory_order_consume);
             // Race against other steals and a pop.
             if (top.compare_exchange_strong(t, t + 1, std::memory_order_seq_cst, std::memory_order_relaxed))
-                stolen = a->get(t);
+            {
+                out_ref = a->get(t);
+                return true;
+            }
         }
 
-        return stolen;
+        return false;
     }
 
     // An experimental mechanism to reclaim unlinked buffers. Each
@@ -258,7 +257,13 @@ private:
     std::shared_ptr<Deque<T>> deque;
 
 public:
-    explicit Worker(std::shared_ptr<Deque<T>> d) : deque(d) {}
+    explicit Worker() : deque(nullptr) {} // invalid state default ctor
+    // Deferred init setter
+    void setDeque(std::shared_ptr<Deque<T>> d) { deque = std::move(d); }
+
+    // Regular ctor
+    explicit Worker(std::shared_ptr<Deque<T>> d) : deque(std::move(d)) {}
+
 
     // Copy constructor.
     // There can only be one worker end.
@@ -267,11 +272,11 @@ public:
     // Move constructor.
     Worker(Worker<T>&& w) : deque(std::move(w.deque)) {}
 
-    ~Worker() {}
+    ~Worker() = default;
 
-    void push(const T item) { deque->push_bottom(item); }
+    void push(const T& item) { deque->push_bottom(item); }
 
-    [[nodiscard]] std::optional<T> pop() { return deque->pop_bottom(); }
+    [[nodiscard]] bool pop(T& out_ref) { return deque->pop_bottom(out_ref); }
 };
 
 template <typename T>
@@ -282,7 +287,16 @@ private:
     buffer_tls* buffer_data;
 
 public:
-    explicit Stealer(std::shared_ptr<Deque<T>> d) : deque(d), buffer_data(deque->reclaimer.register_thread()) {}
+    explicit Stealer() : deque(nullptr), buffer_data(nullptr) {} // invalid state default ctor
+    // Deferred init setter
+    void setDeque(std::shared_ptr<Deque<T>> d)
+    {
+        deque = std::move(d);
+        buffer_data = deque->reclaimer.register_thread();
+    }
+
+    // Regular ctor
+    explicit Stealer(std::shared_ptr<Deque<T>> d) : deque(std::move(d)), buffer_data(deque->reclaimer.register_thread()) {}
 
     // Copy constructor.
     //
@@ -295,15 +309,15 @@ public:
     // thread.
     Stealer(Stealer<T>&& s) : deque(std::move(s.deque)), buffer_data(s.buffer_data) {}
 
-    ~Stealer() {}
+    ~Stealer() = default;
 
-    [[nodiscard]] std::optional<T> steal()
+    [[nodiscard]] bool steal(T& out_ref)
     {
         // We use memory_order_release to synchronize with the read by the
         // reclaimer. It makes sense, but I'm not absolutely sure about
         // this.
         buffer_data->was_idle.store(false, std::memory_order_release);
-        auto stolen = deque->steal();
+        auto stolen = deque->steal(out_ref);
         buffer_data->was_idle.store(true, std::memory_order_release);
 
         // Stealers load the buffer pointer using memory_order_consume.
@@ -314,6 +328,7 @@ public:
     }
 };
 }
+
 // Create a worker and stealer end for a single deque. The stealer end
 // can be cloned when spawning stealer threads.
 //
@@ -330,10 +345,10 @@ public:
 // foo.join();
 //
 template <typename T>
-std::pair<detail::spmc::Worker<T>, detail::spmc::Stealer<T>> make_spmc_queue()
+std::pair<spmc::Worker<T>, spmc::Stealer<T>> make_spmc_queue()
 {
-    auto d = std::make_shared<detail::spmc::Deque<T>>();
-    return {detail::spmc::Worker<T>(d), detail::spmc::Stealer<T>(d)};
+    auto d = std::make_shared<spmc::Deque<T>>();
+    return {spmc::Worker<T>(d), spmc::Stealer<T>(d)};
 }
 
 } // namespace deque
