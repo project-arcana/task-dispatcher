@@ -219,7 +219,7 @@ bool td::Scheduler::get_next_job(td::container::Task& job)
         bool expected = true;
         auto const casSuccess = std::atomic_compare_exchange_strong_explicit(&_fibers[resumable_fiber_index].is_waiting_cleaned_up, &expected, false, //
                                                                              std::memory_order_seq_cst, std::memory_order_relaxed);
-        if ((casSuccess)) // TODO: TD_LIKELY
+        if (TD_LIKELY(casSuccess))
         {
             // is_waiting_cleaned_up was true, and is now exchanged to false
             // The resumable fiber is properly cleaned up and can be switched to
