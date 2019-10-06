@@ -1,5 +1,7 @@
 #include <array>
 #include <iostream>
+
+#include <container/spmc_queue.hh>
 #include <td.hh>
 
 namespace
@@ -79,6 +81,12 @@ double calculate_pi(int k, int num_batches_target)
 
 int main()
 {
+    auto [wrk, stl] = td::container::make_spmc_queue<int>();
+    wrk.push(15);
+    wrk.push(62);
+    std::cout << "got " << wrk.pop().value_or(-1) << std::endl;
+    std::cout << "stole " << stl.steal().value_or(-1) << std::endl;
+
     td::scheduler_config config;
     //   config.num_threads = 1;
     td::launch(config, [] {
