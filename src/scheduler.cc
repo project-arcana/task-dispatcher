@@ -82,6 +82,7 @@ struct Scheduler::tls_t
 
     container::spmc::Worker<container::Task> chase_lev_worker;
     std::vector<container::spmc::Stealer<container::Task>> chase_lev_stealers;
+    thread_index_t last_steal_target = invalid_thread;
 
     void prepare_chase_lev(std::vector<std::shared_ptr<container::spmc::Deque<container::Task>>> const& deques, thread_index_t index)
     {
@@ -97,6 +98,8 @@ struct Scheduler::tls_t
             if (t_i != index)
                 chase_lev_stealers.emplace_back(deques[t_i]);
         }
+
+        last_steal_target = index + 1;
     }
 
     bool get_job(container::Task& out_ref)
@@ -104,9 +107,15 @@ struct Scheduler::tls_t
         if (chase_lev_worker.pop(out_ref))
             return true;
 
-        for (auto& s : chase_lev_stealers)
-            if (s.steal(out_ref))
+        for (auto i = 0u; i < chase_lev_stealers.size(); ++i)
+        {
+            auto const target_i = (last_steal_target + i) % chase_lev_stealers.size();
+            if (chase_lev_stealers[target_i].steal(out_ref))
+            {
+                last_steal_target = thread_index_t(target_i);
                 return true;
+            }
+        }
 
         return false;
     }
