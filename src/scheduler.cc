@@ -2,10 +2,27 @@
 
 #include <cassert>
 #include <limits> // Only for sanity check static_asserts
+#include <vector>
 
 #include "common/panic.hh"
+#include "container/spmc_queue.hh"
 #include "native/fiber.hh"
 #include "native/thread.hh"
+
+namespace
+{
+// Configure job distribution strategy
+// If true:
+//  use per-thread dynamically growing Chase-Lev SPMC Workstealing Queues/Deques
+//      located in tls_t::chase_lev_worker and chase_lev_stealers
+//  push submitted jobs to local queue
+//  try to pop local queue, otherwise steal from a different one
+//      in tls_t::get_job
+// If false:
+//  use a single, fixed size MPMC queue
+//      in Scheduler::_jobs
+auto constexpr s_use_workstealing = true;
+}
 
 thread_local td::Scheduler* td::Scheduler::s_current_scheduler = nullptr;
 
@@ -62,6 +79,37 @@ struct Scheduler::tls_t
     fiber_index_t previous_fiber_index = invalid_fiber;
 
     fiber_destination_e previous_fiber_dest = fiber_destination_e::none;
+
+    container::spmc::Worker<container::Task> chase_lev_worker;
+    std::vector<container::spmc::Stealer<container::Task>> chase_lev_stealers;
+
+    void prepare_chase_lev(std::vector<std::shared_ptr<container::spmc::Deque<container::Task>>> const& deques, thread_index_t index)
+    {
+        // The chase lev deque this thread owns
+        auto const& own_deque = deques[index];
+        // create worker for it
+        chase_lev_worker.setDeque(own_deque);
+
+        // Create stealers for the remaining chase lev deques
+        chase_lev_stealers.reserve(deques.size() - 1);
+        for (auto t_i = 0u; t_i < deques.size(); ++t_i)
+        {
+            if (t_i != index)
+                chase_lev_stealers.emplace_back(deques[t_i]);
+        }
+    }
+
+    bool get_job(container::Task& out_ref)
+    {
+        if (chase_lev_worker.pop(out_ref))
+            return true;
+
+        for (auto& s : chase_lev_stealers)
+            if (s.steal(out_ref))
+                return true;
+
+        return false;
+    }
 };
 
 }
@@ -81,10 +129,27 @@ struct Scheduler::callback_funcs
         container::Task main_job;
     };
 
+    struct worker_arg_t
+    {
+        thread_index_t const index;
+        td::Scheduler* const owning_scheduler;
+        std::vector<std::shared_ptr<container::spmc::Deque<container::Task>>> const chase_lev_deques;
+    };
+
     static TD_NATIVE_THREAD_FUNC_DECL worker_func(void* arg_void)
     {
-        Scheduler* scheduler = static_cast<class td::Scheduler*>(arg_void);
+        worker_arg_t const* const worker_arg = static_cast<worker_arg_t*>(arg_void);
+
+        // Register thread local current scheduler variable
+        Scheduler* const scheduler = worker_arg->owning_scheduler;
         scheduler->s_current_scheduler = scheduler;
+
+        // Set up chase lev deques
+        if constexpr (s_use_workstealing)
+            s_tls.prepare_chase_lev(worker_arg->chase_lev_deques, worker_arg->index);
+
+        // Clean up allocated argument
+        delete worker_arg;
 
         // Set up thread fiber
         native::create_main_fiber(s_tls.thread_fiber);
@@ -245,7 +310,10 @@ bool td::Scheduler::get_next_job(td::container::Task& job)
         }
     }
 
-    return _jobs.dequeue(job);
+    if constexpr (s_use_workstealing)
+        return s_tls.get_job(job);
+    else
+        return _jobs.dequeue(job);
 }
 
 bool td::Scheduler::counter_add_waiting_fiber(td::Scheduler::atomic_counter_t& counter, fiber_index_t fiber_index, uint32_t counter_target)
@@ -366,7 +434,7 @@ void td::Scheduler::submitTasks(td::container::Task* jobs, uint32_t num_jobs, td
     {
         // Initialized handle, read its counter index
         TD_PANIC_IF(_counter_handles.isExpired(sync.handle), "Attempted to run jobs using an expired sync, consider increasing "
-                                                              "scheduler::max_handles_in_flight");
+                                                             "scheduler::max_handles_in_flight");
         counter_index = _counter_handles.get(sync.handle);
     }
     else
@@ -384,7 +452,11 @@ void td::Scheduler::submitTasks(td::container::Task* jobs, uint32_t num_jobs, td
     for (auto i = 0u; i < num_jobs; ++i)
     {
         jobs[i].setMetadata(counter_index);
-        success &= _jobs.enqueue(jobs[i]);
+
+        if constexpr (s_use_workstealing)
+            s_tls.chase_lev_worker.push(jobs[i]);
+        else
+            success &= _jobs.enqueue(jobs[i]);
     }
 
     TD_PANIC_IF(!success, "Job queue is full, consider increasing config.max_num_jobs");
@@ -470,6 +542,17 @@ void td::Scheduler::start(td::container::Task main_task)
 
     // Launch worker threads, starting at 1
     {
+        std::vector<std::shared_ptr<container::spmc::Deque<container::Task>>> thread_deques;
+
+        if constexpr (s_use_workstealing)
+        {
+            thread_deques.reserve(_num_threads);
+            for (auto i = 0; i < _num_threads; ++i)
+                thread_deques.push_back(std::make_shared<container::spmc::Deque<container::Task>>());
+
+            s_tls.prepare_chase_lev(thread_deques, 0);
+        }
+
         for (thread_index_t i = 1; i < _num_threads; ++i)
         {
             native::thread_t& thread = _threads[i];
@@ -477,10 +560,11 @@ void td::Scheduler::start(td::container::Task main_task)
             // TODO: Adjust this stack size
             // On Win 10 1803 and Linux 4.18 this seems to be entirely irrelevant
             auto constexpr thread_stack_overhead_safety = sizeof(void*) * 16;
-            if (!native::create_thread(uint32_t(_fiber_stack_size) + thread_stack_overhead_safety, callback_funcs::worker_func, this, i, &thread))
-            {
-                TD_PANIC_IF(true, "Failed to create worker thread");
-            }
+
+            // Prepare worker arg
+            callback_funcs::worker_arg_t* const worker_arg = new callback_funcs::worker_arg_t{i, this, thread_deques};
+            auto success = native::create_thread(uint32_t(_fiber_stack_size) + thread_stack_overhead_safety, callback_funcs::worker_func, worker_arg, i, &thread);
+            TD_PANIC_IF(!success, "Failed to create worker thread");
         }
     }
 

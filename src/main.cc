@@ -84,6 +84,7 @@ int main()
     td::scheduler_config config;
 //    config.max_num_jobs = 1000000;
     td::launch(config, [&] {
+
         if(0)
         {
             auto s1 = td::submit([] { printf("Task 1\n"); });
@@ -101,7 +102,7 @@ int main()
         {
             auto largeTaskAmount = new td::container::Task[config.max_num_jobs];
             for (auto i = 0u; i < config.max_num_jobs; ++i)
-                largeTaskAmount[i].lambda([] { /* SWYM */ });
+                largeTaskAmount[i].lambda([] { /* no-op */ });
 
             auto before = td::intrin::rdtsc();
             auto s = td::submit_raw(largeTaskAmount, config.max_num_jobs);
