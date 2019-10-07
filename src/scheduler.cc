@@ -2,9 +2,12 @@
 
 #include <cassert>
 #include <limits> // Only for sanity check static_asserts
+#include <mutex>  // std::lock_guard
 #include <vector>
 
 #include "common/panic.hh"
+#include "common/spin_lock.hh"
+#include "container/mpsc_queue.hh"
 #include "container/spmc_queue.hh"
 #include "native/fiber.hh"
 #include "native/thread.hh"
@@ -28,13 +31,16 @@ thread_local td::Scheduler* td::Scheduler::s_current_scheduler = nullptr;
 
 namespace td
 {
+using resumable_fiber_mpsc_queue = container::FIFOQueue<Scheduler::fiber_index_t, 32>;
+
 struct Scheduler::atomic_counter_t
 {
     struct waiting_fiber_t
     {
-        uint32_t counter_target = 0;               // the counter value that this fiber is waiting for
-        fiber_index_t fiber_index = invalid_fiber; // index of the waiting fiber
-        std::atomic_bool in_use{true};             // whether this slot in the array is currently being processed
+        uint32_t counter_target = 0;                         // the counter value that this fiber is waiting for
+        fiber_index_t fiber_index = invalid_fiber;           // index of the waiting fiber
+        thread_index_t pinned_thread_index = invalid_thread; // index of the thread this fiber is pinned to, invalid_thread if unpinned
+        std::atomic_bool in_use{true};                       // whether this slot in the array is currently being processed
     };
 
     std::atomic<uint32_t> count; // The value of this counter
@@ -62,6 +68,17 @@ enum class Scheduler::fiber_destination_e : uint8_t
     pool
 };
 
+struct Scheduler::worker_thread_t
+{
+    native::thread_t native;
+
+    // queue containing fibers that are pinned to this thread are ready to resume
+    // same restrictions as for _resumable_fibers apply (worker_fiber_t::is_waiting_cleaned_up)
+    resumable_fiber_mpsc_queue pinned_resumable_fibers = {};
+    // note that this queue uses a spinlock instead of being lock free (TODO)
+    SpinLock pinned_resumable_fibers_lock = {};
+};
+
 struct Scheduler::worker_fiber_t
 {
     native::fiber_t native;
@@ -79,6 +96,8 @@ struct Scheduler::tls_t
     fiber_index_t previous_fiber_index = invalid_fiber;
 
     fiber_destination_e previous_fiber_dest = fiber_destination_e::none;
+
+    thread_index_t thread_index; // index of this thread in the scheduler::_threads
 
     container::spmc::Worker<container::Task> chase_lev_worker;
     std::vector<container::spmc::Stealer<container::Task>> chase_lev_stealers;
@@ -152,6 +171,8 @@ struct Scheduler::callback_funcs
         // Register thread local current scheduler variable
         Scheduler* const scheduler = worker_arg->owning_scheduler;
         scheduler->s_current_scheduler = scheduler;
+
+        s_tls.thread_index = worker_arg->index;
 
         // Set up chase lev deques
         if constexpr (s_use_workstealing)
@@ -286,46 +307,86 @@ bool td::Scheduler::get_next_job(td::container::Task& job)
 {
     // Sleeping fibers with jobs that had their dependencies resolved in the meantime
     // have the highest priority
-    fiber_index_t resumable_fiber_index;
-    bool got_resumable = _resumable_fibers.dequeue(resumable_fiber_index);
-    if (got_resumable)
+
+    // Locally pinned fibers first
     {
-        bool expected = true;
-        auto const casSuccess = std::atomic_compare_exchange_strong_explicit(&_fibers[resumable_fiber_index].is_waiting_cleaned_up, &expected, false, //
-                                                                             std::memory_order_seq_cst, std::memory_order_relaxed);
-        if (TD_LIKELY(casSuccess))
+        auto& local_thread = _threads[s_tls.thread_index];
+        fiber_index_t resumable_fiber_index;
+        bool got_resumable;
         {
-            // is_waiting_cleaned_up was true, and is now exchanged to false
-            // The resumable fiber is properly cleaned up and can be switched to
-
-            // KW_LOG_DIAG("[get_next_job] Acquired resumable fiber " << int(resumable_fiber_index) << " which is cleaned up, yielding");
-            yield_to_fiber(resumable_fiber_index, fiber_destination_e::pool);
-
-            // returned, now fall through to next job acquisition
-            // TODO: Think about if this shouldn't retry immediately
+            std::lock_guard lg(local_thread.pinned_resumable_fibers_lock);
+            got_resumable = local_thread.pinned_resumable_fibers.dequeue(resumable_fiber_index);
         }
-        else
+
+        if (got_resumable)
         {
-            // The resumable fiber is not yet cleaned up
-
-            // This should only happen if _resumable_fibers is almost empty, and
-            // the latency impact is low in those cases
-            //            KW_LOG_DIAG("[get_next_job] Acquired resumable fiber " << int(resumable_fiber_index) << ", not cleaned up, re-enqueueing");
-            _resumable_fibers.enqueue(resumable_fiber_index);
-
-            // Sleep 1ms before falling through to next job acquisition to avoid hammering this queue
-            // (scenario: _jobs is empty and _resumable_fibers only contains a single fiber which isn't cleaned up)
-            native::thread_sleep(1);
+            if (try_resume_fiber(resumable_fiber_index))
+            {
+                // Successfully resumed (and returned)
+            }
+            else
+            {
+                // Received fiber is not cleaned up yet, re-enqueue
+                std::lock_guard lg(local_thread.pinned_resumable_fibers_lock);
+                local_thread.pinned_resumable_fibers.enqueue(resumable_fiber_index);
+            }
+            // TODO: Restart, sleep, fallthrough?
         }
     }
 
+    // Global fibers
+    {
+        fiber_index_t resumable_fiber_index;
+        if (_resumable_fibers.dequeue(resumable_fiber_index))
+        {
+            if (try_resume_fiber(resumable_fiber_index))
+            {
+                // Successfully resumed (and returned)
+            }
+            else
+            {
+                // Received fiber is not cleaned up yet, re-enqueue
+
+                // This should only happen if _resumable_fibers is almost empty, and
+                // the latency impact is low in those cases
+                //            KW_LOG_DIAG("[get_next_job] Acquired resumable fiber " << int(resumable_fiber_index) << ", not cleaned up, re-enqueueing");
+                _resumable_fibers.enqueue(resumable_fiber_index);
+            }
+            // TODO: Restart, sleep, fallthrough?
+        }
+    }
+
+    // Pending jobs
     if constexpr (s_use_workstealing)
         return s_tls.get_job(job);
     else
         return _jobs.dequeue(job);
 }
 
-bool td::Scheduler::counter_add_waiting_fiber(td::Scheduler::atomic_counter_t& counter, fiber_index_t fiber_index, uint32_t counter_target)
+bool td::Scheduler::try_resume_fiber(td::Scheduler::fiber_index_t fiber)
+{
+    bool expected = true;
+    auto const casSuccess = std::atomic_compare_exchange_strong_explicit(&_fibers[fiber].is_waiting_cleaned_up, &expected, false, //
+                                                                         std::memory_order_seq_cst, std::memory_order_relaxed);
+    if (TD_LIKELY(casSuccess))
+    {
+        // is_waiting_cleaned_up was true, and is now exchanged to false
+        // The resumable fiber is properly cleaned up and can be switched to
+
+        // KW_LOG_DIAG("[get_next_job] Acquired resumable fiber " << int(fiber) << " which is cleaned up, yielding");
+        yield_to_fiber(fiber, fiber_destination_e::pool);
+
+        // returned, resume was successful
+        return true;
+    }
+    else
+    {
+        // The resumable fiber is not yet cleaned up
+        return false;
+    }
+}
+
+bool td::Scheduler::counter_add_waiting_fiber(td::Scheduler::atomic_counter_t& counter, fiber_index_t fiber_index, thread_index_t pinned_thread_index, uint32_t counter_target)
 {
     for (auto i = 0u; i < atomic_counter_t::max_waiting; ++i)
     {
@@ -338,6 +399,7 @@ bool td::Scheduler::counter_add_waiting_fiber(td::Scheduler::atomic_counter_t& c
         atomic_counter_t::waiting_fiber_t& slot = counter.waiting_fibers[i];
         slot.fiber_index = fiber_index;
         slot.counter_target = counter_target;
+        slot.pinned_thread_index = pinned_thread_index;
         slot.in_use.store(false);
 
         // Check if already done
@@ -392,12 +454,25 @@ void td::Scheduler::counter_check_waiting_fibers(td::Scheduler::atomic_counter_t
             //            KW_LOG_DIAG("[cnst_check_waiting_fibers] Counter reached " << value << ", making waiting fiber " << slot.fiber_index << " resumable");
 
 
-            // The waiting fiber is ready, and locked by this thread, store it in _resumable_fibers
-            bool success = _resumable_fibers.enqueue(slot.fiber_index);
+            // The waiting fiber is ready, and locked by this thread
 
-            // Panic if there is no space left in TLS ready_fibers
-            // This should never happen
-            TD_PANIC_IF(!success, "_resumable_fibers full");
+            if (slot.pinned_thread_index == invalid_thread)
+            {
+                // The waiting fiber is not pinned to any thread, store it in the global _resumable fibers
+                bool success = _resumable_fibers.enqueue(slot.fiber_index);
+
+                // Panic if there is no space left in TLS ready_fibers
+                // This should never happen
+                TD_PANIC_IF(!success, "_resumable_fibers full");
+            }
+            else
+            {
+                // The waiting fiber is pinned to a certain thread, store it there
+                auto& pinned_thread = _threads[slot.pinned_thread_index];
+
+                std::lock_guard lg(pinned_thread.pinned_resumable_fibers_lock);
+                pinned_thread.pinned_resumable_fibers.enqueue(slot.fiber_index);
+            }
 
             // Free the slot
             counter.free_waiting_slots[i].store(true, std::memory_order_release);
@@ -471,7 +546,7 @@ void td::Scheduler::submitTasks(td::container::Task* jobs, uint32_t num_jobs, td
     TD_PANIC_IF(!success, "Job queue is full, consider increasing config.max_num_jobs");
 }
 
-void td::Scheduler::wait(td::sync& sync, uint32_t target)
+void td::Scheduler::wait(td::sync& sync, bool pinnned, uint32_t target)
 {
     // Skip uninitialized sync handles
     if (!sync.initialized)
@@ -490,7 +565,7 @@ void td::Scheduler::wait(td::sync& sync, uint32_t target)
     // The current fiber is now waiting, but not yet cleaned up
     _fibers[s_tls.current_fiber_index].is_waiting_cleaned_up.store(false, std::memory_order_release);
 
-    if (counter_add_waiting_fiber(_counters[counter_index], s_tls.current_fiber_index, target))
+    if (counter_add_waiting_fiber(_counters[counter_index], s_tls.current_fiber_index, pinnned ? s_tls.thread_index : invalid_thread, target))
     {
         // Already done
         //        KW_LOG_DIAG("[wait] Wait for counter " << int(counter_index) << " is over early, resuming immediately");
@@ -515,7 +590,7 @@ void td::Scheduler::wait(td::sync& sync, uint32_t target)
 
 void td::Scheduler::start(td::container::Task main_task)
 {
-    _threads = new native::thread_t[_num_threads];
+    _threads = new worker_thread_t[_num_threads];
     _fibers = new worker_fiber_t[_num_fibers];
     _counters = new atomic_counter_t[_num_counters];
     _shutting_down.store(false, std::memory_order_seq_cst);
@@ -525,7 +600,7 @@ void td::Scheduler::start(td::container::Task main_task)
     auto& main_thread = _threads[0];
     {
         // Receive native thread handle, lock to core 0
-        main_thread = native::get_current_thread();
+        main_thread.native = native::get_current_thread();
         native::set_current_thread_affinity(0);
 
         s_current_scheduler = this;
@@ -553,6 +628,8 @@ void td::Scheduler::start(td::container::Task main_task)
     {
         std::vector<std::shared_ptr<container::spmc::Deque<container::Task>>> thread_deques;
 
+        s_tls.thread_index = 0;
+
         if constexpr (s_use_workstealing)
         {
             thread_deques.reserve(_num_threads);
@@ -564,7 +641,7 @@ void td::Scheduler::start(td::container::Task main_task)
 
         for (thread_index_t i = 1; i < _num_threads; ++i)
         {
-            native::thread_t& thread = _threads[i];
+            worker_thread_t& thread = _threads[i];
 
             // TODO: Adjust this stack size
             // On Win 10 1803 and Linux 4.18 this seems to be entirely irrelevant
@@ -572,7 +649,8 @@ void td::Scheduler::start(td::container::Task main_task)
 
             // Prepare worker arg
             callback_funcs::worker_arg_t* const worker_arg = new callback_funcs::worker_arg_t{i, this, thread_deques};
-            auto success = native::create_thread(uint32_t(_fiber_stack_size) + thread_stack_overhead_safety, callback_funcs::worker_func, worker_arg, i, &thread);
+            auto success = native::create_thread(uint32_t(_fiber_stack_size) + thread_stack_overhead_safety, callback_funcs::worker_func, worker_arg,
+                                                 i, &thread.native);
             TD_PANIC_IF(!success, "Failed to create worker thread");
         }
     }
@@ -608,7 +686,7 @@ void td::Scheduler::start(td::container::Task main_task)
 
         // Join worker threads, starting at 1
         for (auto i = 1u; i < _num_threads; ++i)
-            native::join_thread(_threads[i]);
+            native::join_thread(_threads[i].native);
 
         // Clean up
         {

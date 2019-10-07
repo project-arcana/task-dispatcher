@@ -55,7 +55,7 @@ public:
     // Enqueue the given tasks and associate them with a sync object
     void submitTasks(container::Task* jobs, uint32_t num_jobs, td::sync& sync);
     // Resume execution after the given sync object has reached a set target
-    void wait(td::sync& sync, uint32_t target = 0);
+    void wait(td::sync& sync, bool pinnned = false, uint32_t target = 0);
 
     // The scheduler running the current task
     static Scheduler& current() { return *s_current_scheduler; }
@@ -65,7 +65,7 @@ public:
 private:
     static thread_local Scheduler* s_current_scheduler;
 
-private:
+public:
     using fiber_index_t = uint16_t;
     using thread_index_t = uint8_t;
     using counter_index_t = uint16_t;
@@ -75,6 +75,7 @@ private:
 
 private:
     enum class fiber_destination_e : uint8_t;
+    struct worker_thread_t;
     struct worker_fiber_t;
     struct atomic_counter_t;
 
@@ -83,7 +84,7 @@ private:
     std::atomic_bool _shutting_down = {false};
 
     // Threads
-    native::thread_t* _threads;
+    worker_thread_t* _threads;
     thread_index_t const _num_threads;
 
     // Fibers
@@ -118,8 +119,9 @@ private:
     void clean_up_prev_fiber();
 
     bool get_next_job(container::Task& job);
+    bool try_resume_fiber(fiber_index_t fiber);
 
-    bool counter_add_waiting_fiber(atomic_counter_t& counter, fiber_index_t fiber_index, uint32_t counter_target);
+    bool counter_add_waiting_fiber(atomic_counter_t& counter, fiber_index_t fiber_index, thread_index_t pinned_thread_index, uint32_t counter_target);
     void counter_check_waiting_fibers(atomic_counter_t& counter, uint32_t value);
 
     void counter_increment(atomic_counter_t& counter, uint32_t amount = 1);

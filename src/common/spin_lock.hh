@@ -12,6 +12,9 @@ private:
     std::atomic_flag mFlag;
 
 public:
+    SpinLock() = default;
+    ~SpinLock() = default;
+
     void lock()
     {
         // acquire and spin
