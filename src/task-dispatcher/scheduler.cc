@@ -1,9 +1,11 @@
 #include "scheduler.hh"
 
-#include <cassert>
 #include <limits> // Only for sanity check static_asserts
 #include <mutex>  // std::lock_guard
 #include <vector>
+
+#include <cc/assert.hh>
+#include <cc/macros.hh>
 
 #include "common/panic.hh"
 #include "common/spin_lock.hh"
@@ -272,11 +274,7 @@ void td::Scheduler::yield_to_fiber(td::Scheduler::fiber_index_t target_fiber, td
     s_tls.previous_fiber_dest = own_destination;
     s_tls.current_fiber_index = target_fiber;
 
-    TD_DEBUG_PANIC_IF(s_tls.previous_fiber_index == invalid_fiber || s_tls.current_fiber_index == invalid_fiber, "Switching to or from an invalid "
-                                                                                                                 "fiber");
-    //    KW_LOG_DIAG("[yield_to_fiber] Switching from " << int(s_tls.previous_fiber_index) << " ("
-    //                                                   << (own_destination == fiber_destination_e::pool ? "pooling" : "waiting") << ") to "
-    //                                                   << int(s_tls.current_fiber_index));
+    ASSERT(s_tls.previous_fiber_index != invalid_fiber && s_tls.current_fiber_index != invalid_fiber);
 
     native::switch_to_fiber(_fibers[s_tls.current_fiber_index].native, _fibers[s_tls.previous_fiber_index].native);
     clean_up_prev_fiber();
@@ -368,7 +366,7 @@ bool td::Scheduler::try_resume_fiber(td::Scheduler::fiber_index_t fiber)
     bool expected = true;
     auto const casSuccess = std::atomic_compare_exchange_strong_explicit(&_fibers[fiber].is_waiting_cleaned_up, &expected, false, //
                                                                          std::memory_order_seq_cst, std::memory_order_relaxed);
-    if (TD_LIKELY(casSuccess))
+    if (CC_LIKELY(casSuccess))
     {
         // is_waiting_cleaned_up was true, and is now exchanged to false
         // The resumable fiber is properly cleaned up and can be switched to
@@ -421,7 +419,7 @@ bool td::Scheduler::counter_add_waiting_fiber(td::Scheduler::atomic_counter_t& c
         return false;
     }
 
-    // Panic if there is no space left in conter waiting_slots
+    // Panic if there is no space left in counter waiting_slots
     TD_PANIC_IF(true, "Counter waiting slots are full");
     return false;
 }
@@ -460,10 +458,8 @@ void td::Scheduler::counter_check_waiting_fibers(td::Scheduler::atomic_counter_t
             {
                 // The waiting fiber is not pinned to any thread, store it in the global _resumable fibers
                 bool success = _resumable_fibers.enqueue(slot.fiber_index);
-
-                // Panic if there is no space left in TLS ready_fibers
-                // This should never happen
-                TD_PANIC_IF(!success, "_resumable_fibers full");
+                // This should never fail, the container is large enough for all fibers in the system
+                ASSERT(success);
             }
             else
             {
@@ -502,8 +498,8 @@ td::Scheduler::Scheduler(scheduler_config const& config)
     _resumable_fibers(_num_fibers), // TODO: Smaller?
     _free_counters(config.max_num_counters)
 {
-    TD_PANIC_IF(!config.is_valid(), "Scheduler config invalid, use scheduler_config_t::validate()");
-    TD_PANIC_IF(config.num_threads > system::hardware_concurrency, "More threads than physical cores configured");
+    ASSERT(config.is_valid() && "Scheduler config invalid, use scheduler_config_t::validate()");
+    ASSERT((config.num_threads <= system::hardware_concurrency) && "More threads than physical cores configured");
 
     static_assert(ATOMIC_INT_LOCK_FREE == 2 && ATOMIC_BOOL_LOCK_FREE == 2, "No lock-free atomics available on this platform");
     static_assert(invalid_fiber == std::numeric_limits<fiber_index_t>().max(), "Invalid fiber index corrupt");
@@ -651,7 +647,7 @@ void td::Scheduler::start(td::container::Task main_task)
             callback_funcs::worker_arg_t* const worker_arg = new callback_funcs::worker_arg_t{i, this, thread_deques};
             auto success = native::create_thread(uint32_t(_fiber_stack_size) + thread_stack_overhead_safety, callback_funcs::worker_func, worker_arg,
                                                  i, &thread.native);
-            TD_PANIC_IF(!success, "Failed to create worker thread");
+            ASSERT(success && "Failed to create worker thread");
         }
     }
 

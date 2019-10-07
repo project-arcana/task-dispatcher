@@ -24,17 +24,15 @@ inline void wait_for(sync& sync) { Scheduler::current().wait(sync, true); }
 inline void wait_for_unpinned(sync& sync) { Scheduler::current().wait(sync); }
 
 template <class... STs>
-void wait_for(sync& s, sync& peek, STs&... tail)
+void wait_for(STs&... syncs)
 {
-    wait_for(s);
-    wait_for(peek, tail...);
+    (wait_for(syncs), ...);
 }
 
 template <class... STs>
-void wait_for_unpinned(sync& s, sync& peek, STs&... tail)
+void wait_for_unpinned(STs&... syncs)
 {
-    wait_for_unpinned(s);
-    wait_for_unpinned(peek, tail...);
+    (wait_for_unpinned(syncs), ...);
 }
 
 

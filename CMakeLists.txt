@@ -4,11 +4,6 @@ project(task-dispatcher)
 set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 
 # =========================================
-# global options
-
-option(TD_STRICT "if true, enables all warnings and -Werror" OFF)
-
-# =========================================
 # define library
 
 file(GLOB_RECURSE SOURCES
@@ -20,6 +15,7 @@ source_group(TREE "${CMAKE_CURRENT_SOURCE_DIR}/src" FILES ${SOURCES})
 
 add_library(task-dispatcher STATIC ${SOURCES})
 target_include_directories(task-dispatcher PUBLIC src/)
+target_link_libraries(task-dispatcher PUBLIC clean-core)
 
 # =========================================
 # set up compile flags
