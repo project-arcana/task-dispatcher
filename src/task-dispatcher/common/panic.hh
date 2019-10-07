@@ -1,6 +1,6 @@
 #pragma once
 
-#include "macros.hh"
+#include <cc/macros.hh>
 
 namespace td::detail
 {
@@ -13,7 +13,7 @@ struct panic_info
 };
 
 // Triggers a debug break, then crashes the program
-TD_COLD_FUNC TD_NOINLINE void panic(panic_info const& info);
+CC_COLD_FUNC CC_DONT_INLINE void panic(panic_info const& info);
 
 void debugbreak();
 }
@@ -29,7 +29,7 @@ void debugbreak();
 //
 // TD_PANIC_IF(!action(), "Action failed");
 //
-#define TD_PANIC_IF(_cond_, _msg_) (TD_LIKELY(!(_cond_)) ? void(0) : ::td::detail::panic({_msg_, TD_PRETTY_FUNC, __FILE__, __LINE__}))
+#define TD_PANIC_IF(_cond_, _msg_) (CC_LIKELY(!(_cond_)) ? void(0) : ::td::detail::panic({_msg_, CC_PRETTY_FUNC, __FILE__, __LINE__}))
 
 // TD_DEBUG_PANIC_IF is only active in debug configurations
 //
@@ -37,5 +37,5 @@ void debugbreak();
 #ifndef NDEBUG
 #define TD_DEBUG_PANIC_IF(_cond_, _msg_) TD_PANIC_IF(_cond_, _msg_)
 #else
-#define TD_DEBUG_PANIC_IF(_cond_, _msg_) TD_UNUSED_EXPR(_cond_)
+#define TD_DEBUG_PANIC_IF(_cond_, _msg_) CC_UNUSED(_cond_)
 #endif

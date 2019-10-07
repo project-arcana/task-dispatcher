@@ -2,9 +2,10 @@
 
 #include <memory>
 
+#include <cc/span.hh>
+
 #include "common/panic.hh"
 #include "container/task.hh"
-#include "future.hh"
 #include "scheduler.hh"
 #include "sync.hh"
 
@@ -114,6 +115,14 @@ void launch(F&& func)
 // == submit ==
 
 void submit_raw(sync& sync, container::Task* tasks, unsigned num) { td::Scheduler::current().submitTasks(tasks, num, sync); }
+void submit_raw(sync& sync, cc::span<container::Task> tasks) { submit_raw(sync, tasks.data(), unsigned(tasks.size())); }
+
+[[nodiscard]] sync submit_raw(cc::span<container::Task> tasks)
+{
+    td::sync res;
+    submit_raw(res, tasks.data(), unsigned(tasks.size()));
+    return res;
+}
 
 [[nodiscard]] sync submit_raw(container::Task* tasks, unsigned num)
 {
@@ -121,6 +130,7 @@ void submit_raw(sync& sync, container::Task* tasks, unsigned num) { td::Schedule
     submit_raw(res, tasks, num);
     return res;
 }
+
 
 template <class F, class... Args>
 [[nodiscard]] auto submit(F&& fun, Args&&... args)

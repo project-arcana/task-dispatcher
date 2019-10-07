@@ -49,28 +49,3 @@
 #elif defined(__MINGW32__) || defined(__MINGW64__) || defined(__clang__) || defined(__GNUC__)
 #define TD_COMPILER_POSIX
 #endif
-
-// == Compiler specifics ==
-#ifdef TD_COMPILER_POSIX
-
-#define TD_PRETTY_FUNC __PRETTY_FUNCTION__
-#define TD_NOINLINE __attribute__((noinline))
-#define TD_FORCEINLINE __attribute__((always_inline))
-#define TD_LIKELY(x) __builtin_expect(bool(x), 1)
-#define TD_UNLIKELY(x) __builtin_expect(bool(x), 0)
-#define TD_COLD_FUNC __attribute__((cold))
-#define TD_HOT_FUNC __attribute__((hot))
-
-#elif defined TD_COMPILER_MSVC
-
-#define TD_PRETTY_FUNC __FUNCTION__
-#define TD_NOINLINE __declspec(noinline)
-#define TD_FORCEINLINE __forceinline
-#define TD_LIKELY(x) x
-#define TD_UNLIKELY(x) x
-#define TD_COLD_FUNC
-#define TD_HOT_FUNC
-
-#else
-#error "Unsupported compiler"
-#endif
