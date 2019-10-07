@@ -39,7 +39,7 @@ void wait_for_unpinned(STs&... syncs)
 
 // == getter / misc ==
 
-[[nodiscard]] inline bool scheduler_alive() { return Scheduler::isInsideScheduler(); }
+[[nodiscard]] inline bool is_scheduler_alive() { return Scheduler::isInsideScheduler(); }
 
 // Future - TODO: Rewrite
 template <class T>
@@ -87,7 +87,7 @@ void launch(scheduler_config& config, F&& func)
 {
     static_assert(std::is_invocable_v<F>, "function must be invocable without arguments");
     static_assert(std::is_same_v<std::invoke_result_t<F>, void>, "return must be void");
-    if (scheduler_alive())
+    if (is_scheduler_alive())
         return;
 
     config.ceil_to_pow2();
@@ -103,7 +103,7 @@ void launch(F&& func)
 {
     static_assert(std::is_invocable_v<F>, "function must be invocable without arguments");
     static_assert(std::is_same_v<std::invoke_result_t<F>, void>, "return must be void");
-    if (scheduler_alive())
+    if (is_scheduler_alive())
         return;
 
     Scheduler scheduler;
