@@ -3,8 +3,8 @@
 #include <cstdint>
 #include <utility> // std::move, std::forward, std::enable_if_t, std::is_invocable_r_v
 
-#include <common/panic.hh>
-#include <common/system_info.hh>
+#include <task-dispatcher/common/panic.hh>
+#include <task-dispatcher/common/system_info.hh>
 
 namespace td::container
 {

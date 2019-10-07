@@ -1,6 +1,6 @@
 #include "scheduler.hh"
 
-#include <common/math_intrin.hh>
+#include <task-dispatcher/common/math_intrin.hh>
 
 void td::scheduler_config::ceil_to_pow2()
 {

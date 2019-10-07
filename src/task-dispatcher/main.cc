@@ -1,9 +1,10 @@
 #include <array>
-#include <common/math_intrin.hh>
-#include <container/spmc_queue.hh>
 #include <iostream>
-#include <td.hh>
 #include <thread>
+
+#include <task-dispatcher/td.hh>
+#include <task-dispatcher/common/math_intrin.hh>
+#include <task-dispatcher/container/spmc_queue.hh>
 
 namespace
 {

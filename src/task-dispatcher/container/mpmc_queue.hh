@@ -3,8 +3,8 @@
 #include <atomic>
 #include <cstdint>
 
-#include <common/system_info.hh>
-#include <common/panic.hh>
+#include <task-dispatcher/common/system_info.hh>
+#include <task-dispatcher/common/panic.hh>
 
 namespace td::container
 {

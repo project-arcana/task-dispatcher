@@ -6,10 +6,11 @@
 
 #include <atomic>
 
-#include <common/win32_sanitized.hh>
-#include <common/panic.hh>
-
+#include <task-dispatcher/common/win32_sanitized.hh>
 #include <process.h>
+
+#include <task-dispatcher/common/panic.hh>
+
 
 #else
 

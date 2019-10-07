@@ -2,7 +2,7 @@
 
 #include <limits>
 
-#include <common/panic.hh>
+#include <task-dispatcher/common/panic.hh>
 
 namespace td::container
 {

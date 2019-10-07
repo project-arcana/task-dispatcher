@@ -1,8 +1,9 @@
 #pragma once
 
 #include <atomic>
-#include <common/system_info.hh>
 #include <cstdint>
+
+#include <task-dispatcher/common/system_info.hh>
 
 #include "container/mpmc_queue.hh"
 #include "container/task.hh"

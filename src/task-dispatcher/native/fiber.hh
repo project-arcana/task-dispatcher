@@ -5,8 +5,8 @@
 #include <cstdint>
 #include <cstdlib>
 
-#include <common/panic.hh>
-#include <common/win32_sanitized.hh>
+#include <task-dispatcher/common/panic.hh>
+#include <task-dispatcher/common/win32_sanitized.hh>
 
 #else
 
