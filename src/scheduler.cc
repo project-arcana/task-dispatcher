@@ -557,7 +557,7 @@ void td::Scheduler::start(td::container::Task main_task)
         {
             thread_deques.reserve(_num_threads);
             for (auto i = 0; i < _num_threads; ++i)
-                thread_deques.push_back(std::make_shared<container::spmc::Deque<container::Task>>());
+                thread_deques.push_back(std::make_shared<container::spmc::Deque<container::Task>>(8));
 
             s_tls.prepare_chase_lev(thread_deques, 0);
         }

@@ -29,11 +29,11 @@ public:
 
     [[nodiscard]] Buffer<T>* next_buffer() { return next; }
 
-    [[nodiscard]] long size() const { return static_cast<long>(1 << log_size); }
+    [[nodiscard]] size_t size() const { return static_cast<size_t>(1 << log_size); }
 
-    [[nodiscard]] T get(long i) const { return segment[i % size()]; }
+    [[nodiscard]] T get(size_t i) const { return segment[i % size()]; }
 
-    void put(long i, T const& item) { segment[i % size()] = item; }
+    void put(size_t i, T const& item) { segment[i % size()] = item; }
 
     [[nodiscard]] Buffer<T>* resize(long b, long t, int delta)
     {
@@ -103,13 +103,16 @@ private:
     std::atomic<long> top;
     std::atomic<long> bottom;
     Buffer<T>* unlinked;
-    static const int log_initial_size = 4;
+    int const log_initial_size;
 
 public:
     Reclaimer reclaimer;
     std::atomic<Buffer<T>*> buffer;
 
-    Deque() : top(0), bottom(0), unlinked(), reclaimer(), buffer(new Buffer<T>(log_initial_size, 0)) {}
+    Deque(int log_reserve_size = 4)
+      : top(0), bottom(0), unlinked(), log_initial_size(log_reserve_size), reclaimer(), buffer(new Buffer<T>(log_initial_size, 0))
+    {
+    }
 
     ~Deque()
     {
@@ -345,9 +348,9 @@ public:
 // foo.join();
 //
 template <typename T>
-std::pair<spmc::Worker<T>, spmc::Stealer<T>> make_spmc_queue()
+std::pair<spmc::Worker<T>, spmc::Stealer<T>> make_spmc_queue(int reserve_size = 4)
 {
-    auto d = std::make_shared<spmc::Deque<T>>();
+    auto d = std::make_shared<spmc::Deque<T>>(reserve_size);
     return {spmc::Worker<T>(d), spmc::Stealer<T>(d)};
 }
 
