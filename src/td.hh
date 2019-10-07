@@ -20,9 +20,15 @@ constexpr T int_div_ceil(T a, T b)
 
 // == wait ==
 
-// TODO
-// inline void wait_for(sync& sync) {}
+inline void wait_for(sync& sync) { Scheduler::current().wait(sync, true); }
 inline void wait_for_unpinned(sync& sync) { Scheduler::current().wait(sync); }
+
+template <class... STs>
+void wait_for(sync& s, sync& peek, STs&... tail)
+{
+    wait_for(s);
+    wait_for(peek, tail...);
+}
 
 template <class... STs>
 void wait_for_unpinned(sync& s, sync& peek, STs&... tail)
@@ -45,13 +51,13 @@ private:
     std::shared_ptr<T> const mValue;
 
 public:
-    // TODO
-    //    [[nodiscard]] T get()  {
-    //        ::td::wait_for(mSync);
-    //        return *mValue;
-    //    }
+    [[nodiscard]] T const& get()
+    {
+        ::td::wait_for(mSync);
+        return *mValue;
+    }
 
-    [[nodiscard]] T get_unpinned()
+    [[nodiscard]] T const& get_unpinned()
     {
         ::td::wait_for_unpinned(mSync);
         return *mValue;
@@ -66,7 +72,7 @@ public:
     {
         // Enforce sync guarantee
         if (mSync.initialized)
-            ::td::wait_for_unpinned(mSync);
+            ::td::wait_for(mSync);
     }
 
     future(future&) = delete;

@@ -1,8 +1,9 @@
 #include <array>
+#include <common/math_intrin.hh>
 #include <container/spmc_queue.hh>
 #include <iostream>
 #include <td.hh>
-#include <common/math_intrin.hh>
+#include <thread>
 
 namespace
 {
@@ -82,10 +83,10 @@ double calculate_pi(int k, int num_batches_target)
 int main()
 {
     td::scheduler_config config;
-//    config.max_num_jobs = 1000000;
+    //    config.max_num_jobs = 1000000;
     td::launch(config, [&] {
+        std::cout << std::this_thread::get_id() << " thread" << std::endl;
 
-        if(0)
         {
             auto s1 = td::submit([] { printf("Task 1\n"); });
             td::submit(s1, [] { printf("Task 1 - append \n"); });
@@ -97,6 +98,8 @@ int main()
 
             td::wait_for_unpinned(s1);
         }
+
+        std::cout << std::this_thread::get_id() << " thread" << std::endl;
 
         for (auto _ = 0; _ < 10; ++_)
         {
@@ -117,17 +120,17 @@ int main()
             auto after_wait = td::intrin::rdtsc();
 
             std::cout << "Wait time: " << (after_wait - before_wait) << " cycles" << std::endl;
-
         }
+        std::cout << std::this_thread::get_id() << " thread" << std::endl;
 
-        return;
 
         {
             auto f1 = td::submit([] { return 5.f * 15.f; });
-            std::cout << "Future 1: " << f1.get_unpinned() << std::endl;
+            std::cout << "Future 1: " << f1.get() << std::endl;
 
-            std::cout << "PI: " << calculate_pi(1000, 64) << std::endl;
+            std::cout << "PI: " << calculate_pi(10000, 64) << std::endl;
         }
+        std::cout << std::this_thread::get_id() << " thread" << std::endl;
 
         {
             td::sync s2;
