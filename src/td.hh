@@ -88,7 +88,7 @@ void launch(scheduler_config& config, F&& func)
 {
     static_assert(std::is_invocable_v<F>, "function must be invocable without arguments");
     static_assert(std::is_same_v<std::invoke_result_t<F>, void>, "return must be void");
-    if (Scheduler::isInsideScheduler())
+    if (scheduler_alive())
         return;
 
     config.ceil_to_pow2();
@@ -104,7 +104,7 @@ void launch(F&& func)
 {
     static_assert(std::is_invocable_v<F>, "function must be invocable without arguments");
     static_assert(std::is_same_v<std::invoke_result_t<F>, void>, "return must be void");
-    if (Scheduler::isInsideScheduler())
+    if (scheduler_alive())
         return;
 
     Scheduler scheduler;
@@ -115,6 +115,15 @@ void launch(F&& func)
 
 // == submit ==
 
+void submit_raw(sync& sync, container::Task* tasks, unsigned num) { td::Scheduler::current().submitTasks(tasks, num, sync); }
+
+[[nodiscard]] sync submit_raw(container::Task* tasks, unsigned num)
+{
+    td::sync res;
+    submit_raw(res, tasks, num);
+    return res;
+}
+
 template <class F, class... Args>
 [[nodiscard]] auto submit(F&& fun, Args&&... args)
 {
@@ -124,7 +133,7 @@ template <class F, class... Args>
     {
         sync res;
         container::Task dispatch([=] { fun(args...); });
-        Scheduler::current().submitTasks(&dispatch, 1, res);
+        submit_raw(res, &dispatch, 1);
         return res;
     }
     else
@@ -133,7 +142,7 @@ template <class F, class... Args>
         future<R> res;
         R* const result_ptr = res.get_raw_pointer();
         container::Task dispatch([=] { *result_ptr = fun(args...); });
-        Scheduler::current().submitTasks(&dispatch, 1, s);
+        submit_raw(s, &dispatch, 1);
         res.set_sync(s);
         return res;
     }
@@ -145,7 +154,7 @@ template <class F, class... Args>
     static_assert(std::is_invocable_v<F, Args...>, "function must be invocable with the given args");
     static_assert(std::is_same_v<std::invoke_result_t<F, Args...>, void>, "return must be void");
     container::Task dispatch([=] { fun(args...); });
-    Scheduler::current().submitTasks(&dispatch, 1, s);
+    submit_raw(s, &dispatch, 1);
 }
 
 // TODO
@@ -159,14 +168,13 @@ template <class F, class... Args>
 //    Scheduler::current().submitTasks(&dispatch, 1, s);
 //}
 
-
 template <class F>
 void submit(sync& sync, F&& func)
 {
     static_assert(std::is_invocable_v<F>, "function must be invocable without arguments");
     static_assert(std::is_same_v<std::invoke_result_t<F>, void>, "return must be void");
     container::Task dispatch(std::forward<F>(func));
-    Scheduler::current().submitTasks(&dispatch, 1, sync);
+    submit_raw(sync, &dispatch, 1);
 }
 
 template <class F>
@@ -177,7 +185,7 @@ void submit_n(sync& sync, F&& func, unsigned n)
     auto tasks = new container::Task[n];
     for (auto i = 0u; i < n; ++i)
         tasks[i].lambda([=] { func(i); });
-    Scheduler::current().submitTasks(tasks, n, sync);
+    submit_raw(sync, tasks, n);
     delete[] tasks;
 }
 
@@ -194,18 +202,9 @@ void submit_batched(sync& sync, F&& func, unsigned n, unsigned num_batches_targe
          ++batch, batchStart = batch * batch_size, batchEnd = min((batch + 1) * batch_size, n))
         tasks[batch].lambda([=] { func(batchStart, batchEnd); });
 
-    Scheduler::current().submitTasks(tasks, num_batches, sync);
+    submit_raw(sync, tasks, num_batches);
     delete[] tasks;
 }
-
-[[nodiscard]] sync submit_raw(container::Task* tasks, unsigned num)
-{
-    td::sync res;
-    td::Scheduler::current().submitTasks(tasks, num, res);
-    return res;
-}
-
-void submit_raw(sync& sync, container::Task* tasks, unsigned num) { td::Scheduler::current().submitTasks(tasks, num, sync); }
 
 template <class F>
 [[nodiscard]] auto submit(F&& fun)
@@ -216,7 +215,7 @@ template <class F>
     {
         sync res;
         container::Task dispatch([=] { fun(); });
-        Scheduler::current().submitTasks(&dispatch, 1, res);
+        submit_raw(res, &dispatch, 1);
         return res;
     }
     else
@@ -225,7 +224,7 @@ template <class F>
         future<R> res;
         R* const result_ptr = res.get_raw_pointer();
         container::Task dispatch([=] { *result_ptr = fun(); });
-        Scheduler::current().submitTasks(&dispatch, 1, s);
+        submit_raw(s, &dispatch, 1);
         res.set_sync(s);
         return res;
     }
@@ -240,7 +239,7 @@ template <class F>
     auto tasks = new container::Task[n];
     for (auto i = 0u; i < n; ++i)
         tasks[i].lambda([=] { func(i); });
-    Scheduler::current().submitTasks(tasks, n, res);
+    submit_raw(res, tasks, n);
     delete[] tasks;
     return res;
 }
