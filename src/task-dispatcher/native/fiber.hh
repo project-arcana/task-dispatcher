@@ -5,7 +5,8 @@
 #include <cstdint>
 #include <cstdlib>
 
-#include <task-dispatcher/common/panic.hh>
+#include <cc/assert.hh>
+
 #include <task-dispatcher/common/win32_sanitized.hh>
 
 #else
@@ -52,7 +53,7 @@ inline void set_low_thread_prio() { ::SetThreadPriority(::GetCurrentThread(), TH
 inline void create_main_fiber(fiber_t& fib)
 {
     fib.native = ::ConvertThreadToFiber(nullptr);
-    TD_DEBUG_PANIC_IF(fib.native == nullptr, "Thread to fiber conversion failed");
+    ASSERT(fib.native != nullptr && "Thread to fiber conversion failed");
 }
 
 inline void delete_main_fiber(fiber_t&) { ::ConvertFiberToThread(); }
@@ -60,7 +61,7 @@ inline void delete_main_fiber(fiber_t&) { ::ConvertFiberToThread(); }
 inline void create_fiber(fiber_t& fib, void (*fiber_proc)(void*), void* ctx, size_t stack_size, allocator const& = default_alloc)
 {
     fib.native = ::CreateFiber(stack_size, static_cast<LPFIBER_START_ROUTINE>(fiber_proc), ctx);
-    TD_DEBUG_PANIC_IF(fib.native == nullptr, "Fiber creation failed");
+    ASSERT(fib.native != nullptr && "Fiber creation failed");
 }
 
 inline void delete_fiber(fiber_t& fib, allocator const& = default_alloc) { ::DeleteFiber(fib.native); }

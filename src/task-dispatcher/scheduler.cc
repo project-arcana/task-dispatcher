@@ -1,13 +1,11 @@
 #include "scheduler.hh"
 
+#include <cc/assert.hh>
+#include <cc/macros.hh>
 #include <limits> // Only for sanity check static_asserts
 #include <mutex>  // std::lock_guard
 #include <vector>
 
-#include <cc/assert.hh>
-#include <cc/macros.hh>
-
-#include "common/panic.hh"
 #include "common/spin_lock.hh"
 #include "container/mpsc_queue.hh"
 #include "container/spmc_queue.hh"
@@ -225,7 +223,7 @@ struct Scheduler::callback_funcs
         // Switch back to thread fiber of the current thread
         native::switch_to_fiber(s_tls.thread_fiber, scheduler->_fibers[s_tls.current_fiber_index].native);
 
-        TD_PANIC_IF(true, "Reached end of fiber_func");
+        RUNTIME_ASSERT(false && "Reached end of fiber_func");
     }
 
     static void primary_fiber_func(void* arg_void)
@@ -241,7 +239,7 @@ struct Scheduler::callback_funcs
         // Return to main thread fiber
         native::switch_to_fiber(s_tls.thread_fiber, arg.owning_scheduler->_fibers[s_tls.current_fiber_index].native);
 
-        TD_PANIC_IF(true, "Reached end of primary_fiber_func");
+        RUNTIME_ASSERT(false && "Reached end of primary_fiber_func");
     }
 };
 }
@@ -263,7 +261,7 @@ td::Scheduler::counter_index_t td::Scheduler::acquire_free_counter()
 {
     counter_index_t free_counter;
     auto success = _free_counters.dequeue(free_counter);
-    TD_PANIC_IF(!success, "No free counters available, consider increasing config.max_num_counters");
+    RUNTIME_ASSERT(success && "No free counters available, consider increasing config.max_num_counters");
     _counters[free_counter].reset();
     return free_counter;
 }
@@ -420,7 +418,7 @@ bool td::Scheduler::counter_add_waiting_fiber(td::Scheduler::atomic_counter_t& c
     }
 
     // Panic if there is no space left in counter waiting_slots
-    TD_PANIC_IF(true, "Counter waiting slots are full");
+    RUNTIME_ASSERT(false && "Counter waiting slots are full");
     return false;
 }
 
@@ -513,8 +511,9 @@ void td::Scheduler::submitTasks(td::container::Task* jobs, uint32_t num_jobs, td
     if (sync.initialized)
     {
         // Initialized handle, read its counter index
-        TD_PANIC_IF(_counter_handles.isExpired(sync.handle), "Attempted to run jobs using an expired sync, consider increasing "
-                                                             "scheduler::max_handles_in_flight");
+        RUNTIME_ASSERT(!_counter_handles.isExpired(sync.handle)
+                       && "Attempted to run jobs using an expired sync, consider increasing "
+                          "Scheduler::max_handles_in_flight");
         counter_index = _counter_handles.get(sync.handle);
     }
     else
@@ -539,7 +538,7 @@ void td::Scheduler::submitTasks(td::container::Task* jobs, uint32_t num_jobs, td
             success &= _jobs.enqueue(jobs[i]);
     }
 
-    TD_PANIC_IF(!success, "Job queue is full, consider increasing config.max_num_jobs");
+    RUNTIME_ASSERT(success && "Job queue is full, consider increasing config.max_num_jobs");
 }
 
 void td::Scheduler::wait(td::sync& sync, bool pinnned, uint32_t target)
@@ -553,7 +552,7 @@ void td::Scheduler::wait(td::sync& sync, bool pinnned, uint32_t target)
 
     if (_counter_handles.isExpired(sync.handle))
     {
-        TD_PANIC_IF(true, "Attempted to wait on an expired sync, consider increasing scheduler::max_handles_in_flight");
+        RUNTIME_ASSERT(false && "Attempted to wait on an expired sync, consider increasing scheduler::max_handles_in_flight");
     }
 
     auto const counter_index = _counter_handles.get(sync.handle);

@@ -9,8 +9,7 @@
 #include <task-dispatcher/common/win32_sanitized.hh>
 #include <process.h>
 
-#include <task-dispatcher/common/panic.hh>
-
+#include <cc/assert.hh>
 
 #else
 
@@ -112,7 +111,7 @@ inline void wait_for_event(event_t& eventId, uint32_t milliseconds)
         ::ResetEvent(eventId.event);
     }
 
-    TD_DEBUG_PANIC_IF(retval == WAIT_FAILED || prev == 0, "Failed to wait on native event");
+    ASSERT(retval != WAIT_FAILED && prev != 0 && "Failed to wait on native event");
 }
 
 inline void signal_event(event_t eventId)

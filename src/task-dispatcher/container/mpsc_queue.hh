@@ -2,7 +2,7 @@
 
 #include <limits>
 
-#include <task-dispatcher/common/panic.hh>
+#include <cc/assert.hh>
 
 namespace td::container
 {
@@ -47,7 +47,7 @@ public:
 
     void enqueue(T const& val)
     {
-        TD_PANIC_IF(full(), "FIFOQueue Full");
+        ASSERT(!full() && "FIFOQueue Full");
 
         if (empty())
             mTail = 0;

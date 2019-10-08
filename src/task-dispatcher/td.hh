@@ -3,8 +3,8 @@
 #include <memory>
 
 #include <cc/span.hh>
+#include <cc/assert.hh>
 
-#include "common/panic.hh"
 #include "container/task.hh"
 #include "scheduler.hh"
 #include "sync.hh"
@@ -91,7 +91,7 @@ void launch(scheduler_config& config, F&& func)
         return;
 
     config.ceil_to_pow2();
-    TD_PANIC_IF(!config.is_valid(), "Scheduler configuration invalid");
+    ASSERT(config.is_valid() && "Scheduler configuration invalid");
     Scheduler scheduler(config);
     container::Task mainTask;
     mainTask.lambda(std::forward<F>(func));
