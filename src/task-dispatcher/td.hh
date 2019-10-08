@@ -1,9 +1,10 @@
 #pragma once
 
 #include <memory>
+#include <tuple>
 
-#include <clean-core/span.hh>
 #include <clean-core/assert.hh>
+#include <clean-core/span.hh>
 
 #include "container/task.hh"
 #include "scheduler.hh"
@@ -161,7 +162,9 @@ template <class F, class... Args>
 {
     static_assert(std::is_invocable_v<F, Args...>, "function must be invocable with the given args");
     static_assert(std::is_same_v<std::invoke_result_t<F, Args...>, void>, "return must be void");
-    container::Task dispatch([=] { fun(args...); });
+    // A lambda callung fun(args...), but moving the args instead of copying them into the lambda
+    container::Task dispatch(
+        [fun, tup = std::make_tuple(std::move(args)...)] { std::apply([&fun](auto&&... args) { fun(decltype(args)(args)...); }, tup); });
     submit_raw(s, &dispatch, 1);
 }
 
