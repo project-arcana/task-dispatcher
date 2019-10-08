@@ -3,7 +3,8 @@
 #include <cstdint>
 #include <utility> // std::move, std::forward, std::enable_if_t, std::is_invocable_r_v
 
-#include <task-dispatcher/common/panic.hh>
+#include <cc/assert.hh>
+
 #include <task-dispatcher/common/system_info.hh>
 
 namespace td::container
@@ -80,7 +81,7 @@ public:
     template <class T, std::enable_if_t<std::is_invocable_r_v<void, T>, int> = 0>
     void lambda(T&& l)
     {
-        TD_DEBUG_PANIC_IF(isValid(), "Re-initialized task");
+        ASSERT(!isValid()); // && "Re-initialized task");
         static_assert(sizeof(detail::LambdaWrapper<T>) <= usable_buffer_size, "Lambda capture exceeds task buffer size");
         new (static_cast<void*>(mBuffer)) detail::LambdaWrapper(std::forward<T>(l));
     }
@@ -88,7 +89,7 @@ public:
     // From function pointer and userdata void*
     void ptr(detail::FuncPtrWrapper::func_ptr_t func_ptr, void* userdata = nullptr)
     {
-        TD_DEBUG_PANIC_IF(isValid(), "Re-initialized task");
+        ASSERT(!isValid()); // && "Re-initialized task");
         new (static_cast<void*>(mBuffer)) detail::FuncPtrWrapper(func_ptr, userdata);
     }
 
@@ -112,7 +113,7 @@ public:
     // Execute the contained task
     void execute()
     {
-        TD_DEBUG_PANIC_IF(!isValid(), "Executed uninitialized task");
+        ASSERT(isValid()); //, "Executed uninitialized task");
         (*reinterpret_cast<detail::CallableWrapper*>(mBuffer)).call();
     }
 
@@ -120,8 +121,8 @@ public:
     void cleanup()
     {
         (*reinterpret_cast<detail::CallableWrapper*>(mBuffer)).~CallableWrapper();
-#ifndef NDEBUG
-        invalidate();
+#ifdef CC_ENABLE_ASSERTIONS
+        invalidate(); // Invalidation is only required for assert checks
 #endif
     }
 

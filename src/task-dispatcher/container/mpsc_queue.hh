@@ -10,6 +10,7 @@ namespace td::container
 template <class T, size_t N>
 class FIFOQueue
 {
+    static_assert (N > 0);
     static_assert(N < size_t(std::numeric_limits<int>::max()), "FIFOQueue too large");
 
 private:
