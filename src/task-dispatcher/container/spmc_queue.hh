@@ -7,8 +7,8 @@
 namespace td::container
 {
 // Chase-Lev workstealing queue/deque
-// MIT Licensed, from:
 // https://github.com/ssbl/concurrent-deque
+// See licenses/
 namespace spmc
 {
 template <typename T>

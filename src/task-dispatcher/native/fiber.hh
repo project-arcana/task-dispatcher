@@ -1,6 +1,8 @@
 #pragma once
 
-#ifdef _WIN32
+#include <clean-core/macros.hh>
+
+#ifdef CC_OS_WINDOWS
 
 #include <cstdint>
 #include <cstdlib>
@@ -38,7 +40,7 @@ struct allocator
 
 inline auto constexpr default_alloc = allocator{};
 
-#ifdef _WIN32
+#ifdef CC_OS_WINDOWS
 // Thin native fiber abstraction for Win32
 
 struct fiber_t
@@ -74,6 +76,7 @@ extern "C" inline int __gxx_personality_v0() { return 0; }
 #else
 // Fiber API avoiding naive ucontext performance pitfalls for unix
 // http://www.1024cores.net/home/lock-free-algorithms/tricks/fibers
+// See licenses/
 
 inline uint64_t get_tick_count()
 {

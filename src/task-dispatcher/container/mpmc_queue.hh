@@ -11,6 +11,7 @@ namespace td::container
 {
 // Alloc-free MPMC queue, ~75 cycles per enqueue and dequeue
 // http://www.1024cores.net/home/lock-free-algorithms/queues/bounded-mpmc-queue
+// See licenses/
 template <typename T>
 class MPMCQueue
 {

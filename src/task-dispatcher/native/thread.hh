@@ -2,6 +2,8 @@
 
 #include <cstdint>
 
+#include <clean-core/macros.hh>
+
 #ifdef _WIN32
 
 #include <atomic>
@@ -21,7 +23,7 @@
 namespace td::native
 {
 // Thin native thread abstraction
-#ifdef _WIN32
+#ifdef CC_OS_WINDOWS
 struct thread_t
 {
     ::HANDLE handle;
@@ -166,7 +168,7 @@ inline bool create_thread(uint32_t stackSize, thread_start_func_t startRoutine, 
     pthread_attr_setstacksize(&threadAttr, stackSize);
 
 // TODO: OSX and MinGW Thread Affinity
-#if defined(KW_OS_LINUX)
+#if defined(CC_OS_LINUX)
     // Set core affinity
     cpu_set_t cpuSet;
     CPU_ZERO(&cpuSet);
@@ -202,7 +204,7 @@ inline thread_t get_current_thread()
 inline void set_current_thread_affinity(size_t coreAffinity)
 {
 // TODO: OSX and MinGW Thread Affinity
-#if defined(KW_OS_LINUX)
+#if defined(CC_OS_LINUX)
     cpu_set_t cpuSet;
     CPU_ZERO(&cpuSet);
     CPU_SET(coreAffinity, &cpuSet);
