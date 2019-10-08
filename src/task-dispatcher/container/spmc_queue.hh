@@ -21,7 +21,7 @@ private:
     Buffer<T>* next;
 
 public:
-    Buffer(int ls, long id) : id_(id), log_size(ls), segment(new T[1 << log_size]), next(nullptr) {}
+    Buffer(int ls, long id) : id_(id), log_size(ls), segment(new T[1ull << log_size]), next(nullptr) {}
 
     ~Buffer() { delete[] segment; }
 
@@ -29,7 +29,7 @@ public:
 
     [[nodiscard]] Buffer<T>* next_buffer() { return next; }
 
-    [[nodiscard]] size_t size() const { return static_cast<size_t>(1 << log_size); }
+    [[nodiscard]] size_t size() const { return static_cast<size_t>(1ull << log_size); }
 
     [[nodiscard]] T get(size_t i) const { return segment[i % size()]; }
 
