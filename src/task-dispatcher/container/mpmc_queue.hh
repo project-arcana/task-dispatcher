@@ -3,7 +3,7 @@
 #include <atomic>
 #include <cstdint>
 
-#include <cc/assert.hh>
+#include <clean-core/assert.hh>
 
 #include <task-dispatcher/common/system_info.hh>
 

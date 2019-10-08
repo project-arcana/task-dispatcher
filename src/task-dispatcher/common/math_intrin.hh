@@ -3,7 +3,7 @@
 #include <cstdint>
 
 #ifdef _MSC_VER
-#include "win32_sanitized.hh"
+#include <clean-core/native/win32_sanitized.hh>
 #endif
 
 namespace td::intrin

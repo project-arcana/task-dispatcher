@@ -3,7 +3,7 @@
 #include <cstdint>
 #include <utility> // std::move, std::forward, std::enable_if_t, std::is_invocable_r_v
 
-#include <cc/assert.hh>
+#include <clean-core/assert.hh>
 
 #include <task-dispatcher/common/system_info.hh>
 

@@ -5,9 +5,9 @@
 #include <cstdint>
 #include <cstdlib>
 
-#include <cc/assert.hh>
+#include <clean-core/assert.hh>
+#include <clean-core/native/win32_sanitized.hh>
 
-#include <task-dispatcher/common/win32_sanitized.hh>
 
 #else
 

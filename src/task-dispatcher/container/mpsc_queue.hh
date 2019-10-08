@@ -2,7 +2,7 @@
 
 #include <limits>
 
-#include <cc/assert.hh>
+#include <clean-core/assert.hh>
 
 namespace td::container
 {

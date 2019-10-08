@@ -2,8 +2,8 @@
 
 #include <memory>
 
-#include <cc/span.hh>
-#include <cc/assert.hh>
+#include <clean-core/span.hh>
+#include <clean-core/assert.hh>
 
 #include "container/task.hh"
 #include "scheduler.hh"

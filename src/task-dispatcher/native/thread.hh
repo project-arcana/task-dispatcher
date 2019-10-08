@@ -6,10 +6,10 @@
 
 #include <atomic>
 
-#include <task-dispatcher/common/win32_sanitized.hh>
+#include <clean-core/native/win32_sanitized.hh>
 #include <process.h>
 
-#include <cc/assert.hh>
+#include <clean-core/assert.hh>
 
 #else
 

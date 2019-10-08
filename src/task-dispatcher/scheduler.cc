@@ -1,10 +1,11 @@
 #include "scheduler.hh"
 
-#include <cc/assert.hh>
-#include <cc/macros.hh>
 #include <limits> // Only for sanity check static_asserts
 #include <mutex>  // std::lock_guard
 #include <vector>
+
+#include <clean-core/assert.hh>
+#include <clean-core/macros.hh>
 
 #include "common/spin_lock.hh"
 #include "container/mpsc_queue.hh"
