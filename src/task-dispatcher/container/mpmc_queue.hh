@@ -18,7 +18,7 @@ class MPMCQueue
 public:
     MPMCQueue(size_t buffer_size) : mBuffer(new cell[buffer_size]), mBufferMask(buffer_size - 1)
     {
-        ASSERT((buffer_size >= 2) && ((buffer_size & (buffer_size - 1)) == 0) && "MPMCQueue size not a power of two");
+        CC_ASSERT((buffer_size >= 2) && ((buffer_size & (buffer_size - 1)) == 0) && "MPMCQueue size not a power of two");
         for (size_t i = 0; i != buffer_size; i += 1)
             mBuffer[i].sequence_.store(i, std::memory_order_relaxed);
         mEnqueuePos.store(0, std::memory_order_relaxed);

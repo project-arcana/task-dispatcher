@@ -92,7 +92,7 @@ void launch(scheduler_config& config, F&& func)
         return;
 
     config.ceil_to_pow2();
-    ASSERT(config.is_valid() && "Scheduler configuration invalid");
+    CC_ASSERT(config.is_valid() && "Scheduler configuration invalid");
     Scheduler scheduler(config);
     container::Task mainTask;
     mainTask.lambda(std::forward<F>(func));

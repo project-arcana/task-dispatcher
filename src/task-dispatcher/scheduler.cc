@@ -224,7 +224,7 @@ struct Scheduler::callback_funcs
         // Switch back to thread fiber of the current thread
         native::switch_to_fiber(s_tls.thread_fiber, scheduler->_fibers[s_tls.current_fiber_index].native);
 
-        RUNTIME_ASSERT(false && "Reached end of fiber_func");
+        CC_RUNTIME_ASSERT(false && "Reached end of fiber_func");
     }
 
     static void primary_fiber_func(void* arg_void)
@@ -240,7 +240,7 @@ struct Scheduler::callback_funcs
         // Return to main thread fiber
         native::switch_to_fiber(s_tls.thread_fiber, arg.owning_scheduler->_fibers[s_tls.current_fiber_index].native);
 
-        RUNTIME_ASSERT(false && "Reached end of primary_fiber_func");
+        CC_RUNTIME_ASSERT(false && "Reached end of primary_fiber_func");
     }
 };
 }
@@ -262,7 +262,7 @@ td::Scheduler::counter_index_t td::Scheduler::acquire_free_counter()
 {
     counter_index_t free_counter;
     auto success = _free_counters.dequeue(free_counter);
-    RUNTIME_ASSERT(success && "No free counters available, consider increasing config.max_num_counters");
+    CC_RUNTIME_ASSERT(success && "No free counters available, consider increasing config.max_num_counters");
     _counters[free_counter].reset();
     return free_counter;
 }
@@ -273,7 +273,7 @@ void td::Scheduler::yield_to_fiber(td::Scheduler::fiber_index_t target_fiber, td
     s_tls.previous_fiber_dest = own_destination;
     s_tls.current_fiber_index = target_fiber;
 
-    ASSERT(s_tls.previous_fiber_index != invalid_fiber && s_tls.current_fiber_index != invalid_fiber);
+    CC_ASSERT(s_tls.previous_fiber_index != invalid_fiber && s_tls.current_fiber_index != invalid_fiber);
 
     native::switch_to_fiber(_fibers[s_tls.current_fiber_index].native, _fibers[s_tls.previous_fiber_index].native);
     clean_up_prev_fiber();
@@ -419,7 +419,7 @@ bool td::Scheduler::counter_add_waiting_fiber(td::Scheduler::atomic_counter_t& c
     }
 
     // Panic if there is no space left in counter waiting_slots
-    RUNTIME_ASSERT(false && "Counter waiting slots are full");
+    CC_RUNTIME_ASSERT(false && "Counter waiting slots are full");
     return false;
 }
 
@@ -458,7 +458,7 @@ void td::Scheduler::counter_check_waiting_fibers(td::Scheduler::atomic_counter_t
                 // The waiting fiber is not pinned to any thread, store it in the global _resumable fibers
                 bool success = _resumable_fibers.enqueue(slot.fiber_index);
                 // This should never fail, the container is large enough for all fibers in the system
-                ASSERT(success);
+                CC_ASSERT(success);
             }
             else
             {
@@ -491,8 +491,8 @@ td::Scheduler::Scheduler(scheduler_config const& config)
     _resumable_fibers(_num_fibers), // TODO: Smaller?
     _free_counters(config.max_num_counters)
 {
-    ASSERT(config.is_valid() && "Scheduler config invalid, use scheduler_config_t::validate()");
-    ASSERT((config.num_threads <= system::hardware_concurrency) && "More threads than physical cores configured");
+    CC_ASSERT(config.is_valid() && "Scheduler config invalid, use scheduler_config_t::validate()");
+    CC_ASSERT((config.num_threads <= system::hardware_concurrency) && "More threads than physical cores configured");
 
     static_assert(ATOMIC_INT_LOCK_FREE == 2 && ATOMIC_BOOL_LOCK_FREE == 2, "No lock-free atomics available on this platform");
     static_assert(invalid_fiber == std::numeric_limits<fiber_index_t>().max(), "Invalid fiber index corrupt");
@@ -506,7 +506,7 @@ void td::Scheduler::submitTasks(td::container::Task* jobs, unsigned num_jobs, td
     if (sync.initialized)
     {
         // Initialized handle, read its counter index
-        RUNTIME_ASSERT(!_counter_handles.isExpired(sync.handle)
+        CC_RUNTIME_ASSERT(!_counter_handles.isExpired(sync.handle)
                        && "Attempted to run jobs using an expired sync, consider increasing "
                           "Scheduler::max_handles_in_flight");
         counter_index = _counter_handles.get(sync.handle);
@@ -533,7 +533,7 @@ void td::Scheduler::submitTasks(td::container::Task* jobs, unsigned num_jobs, td
             success &= _jobs.enqueue(jobs[i]);
     }
 
-    RUNTIME_ASSERT(success && "Job queue is full, consider increasing config.max_num_jobs");
+    CC_RUNTIME_ASSERT(success && "Job queue is full, consider increasing config.max_num_jobs");
 }
 
 void td::Scheduler::wait(td::sync& sync, bool pinnned, int target)
@@ -545,8 +545,8 @@ void td::Scheduler::wait(td::sync& sync, bool pinnned, int target)
         return;
     }
 
-    RUNTIME_ASSERT(!_counter_handles.isExpired(sync.handle) && "Attempted to wait on an expired sync, consider increasing scheduler::max_handles_in_flight");
-    ASSERT(target >= 0 && "Negative counter target");
+    CC_RUNTIME_ASSERT(!_counter_handles.isExpired(sync.handle) && "Attempted to wait on an expired sync, consider increasing scheduler::max_handles_in_flight");
+    CC_ASSERT(target >= 0 && "Negative counter target");
 
     auto const counter_index = _counter_handles.get(sync.handle);
 
@@ -639,7 +639,7 @@ void td::Scheduler::start(td::container::Task main_task)
             callback_funcs::worker_arg_t* const worker_arg = new callback_funcs::worker_arg_t{i, this, thread_deques};
             auto success = native::create_thread(unsigned(_fiber_stack_size) + thread_stack_overhead_safety, callback_funcs::worker_func, worker_arg,
                                                  i, &thread.native);
-            ASSERT(success && "Failed to create worker thread");
+            CC_ASSERT(success && "Failed to create worker thread");
         }
     }
 
