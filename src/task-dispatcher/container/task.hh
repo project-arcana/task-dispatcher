@@ -98,7 +98,7 @@ public:
     template <class T = default_metadata_t>
     void setMetadata(T data)
     {
-        static_assert(sizeof(T) <= sizeof(metadata_size), "Metadata too large");
+        static_assert(sizeof(T) <= metadata_size, "Metadata too large");
         *reinterpret_cast<T*>(static_cast<void*>(mBuffer + usable_buffer_size)) = data;
     }
 
