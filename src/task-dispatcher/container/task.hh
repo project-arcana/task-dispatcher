@@ -54,7 +54,7 @@ private:
 // POD-struct storing tasks, from either a captureful lambda (of limited size), or a func ptr + void* userdata
 // Additionally stores arbitrary metadata of a fixed size
 //
-// NOTE: If initialized from a lambda, execute_and_cleanup must get called exactly once on any copy of that instance, before the last of them is
+// NOTE: If initialized from a lambda, cleanup() must get called exactly once on any copy of that instance, before the last of them is
 // either destroyed or re-initialized. Zero calls could leak captured non-trivial-dtor types like std::vector, more than one call would read after
 // free. This restriction allows task to be almost POD, but makes usage of this struct outside of rigid scenarios inadvisable.
 struct Task
@@ -118,7 +118,7 @@ public:
     template <class T = default_metadata_t>
     T getMetadata() const
     {
-        static_assert(sizeof(T) <= sizeof(metadata_size), "Metadata too large");
+        static_assert(sizeof(T) <= metadata_size, "Metadata too large");
         return *static_cast<T const*>(static_cast<void const*>(mBuffer + usable_buffer_size));
     }
 
