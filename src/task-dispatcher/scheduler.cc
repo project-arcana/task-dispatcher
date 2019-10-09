@@ -38,13 +38,13 @@ struct Scheduler::atomic_counter_t
 {
     struct waiting_fiber_t
     {
-        uint32_t counter_target = 0;                         // the counter value that this fiber is waiting for
+        int counter_target = 0;                              // the counter value that this fiber is waiting for
         fiber_index_t fiber_index = invalid_fiber;           // index of the waiting fiber
         thread_index_t pinned_thread_index = invalid_thread; // index of the thread this fiber is pinned to, invalid_thread if unpinned
         std::atomic_bool in_use{true};                       // whether this slot in the array is currently being processed
     };
 
-    std::atomic<uint32_t> count; // The value of this counter
+    std::atomic<int> count; // The value of this counter
 
     static auto constexpr max_waiting = 16;
     waiting_fiber_t waiting_fibers[max_waiting];
@@ -62,7 +62,7 @@ struct Scheduler::atomic_counter_t
     friend td::Scheduler;
 };
 
-enum class Scheduler::fiber_destination_e : uint8_t
+enum class Scheduler::fiber_destination_e : cc::uint8
 {
     none,
     waiting,
@@ -212,7 +212,7 @@ struct Scheduler::callback_funcs
                 job.executeAndCleanup();
 
                 // The job returned, decrement the counter
-                scheduler->counter_decrement(scheduler->_counters[job.getMetadata()], 1);
+                scheduler->counter_increment(scheduler->_counters[job.getMetadata()], -1);
             }
             else
             {
@@ -383,7 +383,7 @@ bool td::Scheduler::try_resume_fiber(td::Scheduler::fiber_index_t fiber)
     }
 }
 
-bool td::Scheduler::counter_add_waiting_fiber(td::Scheduler::atomic_counter_t& counter, fiber_index_t fiber_index, thread_index_t pinned_thread_index, uint32_t counter_target)
+bool td::Scheduler::counter_add_waiting_fiber(td::Scheduler::atomic_counter_t& counter, fiber_index_t fiber_index, thread_index_t pinned_thread_index, int counter_target)
 {
     for (auto i = 0u; i < atomic_counter_t::max_waiting; ++i)
     {
@@ -423,7 +423,7 @@ bool td::Scheduler::counter_add_waiting_fiber(td::Scheduler::atomic_counter_t& c
     return false;
 }
 
-void td::Scheduler::counter_check_waiting_fibers(td::Scheduler::atomic_counter_t& counter, uint32_t value)
+void td::Scheduler::counter_check_waiting_fibers(td::Scheduler::atomic_counter_t& counter, int value)
 {
     // Go over each waiting fiber slot
     for (auto i = 0u; i < atomic_counter_t::max_waiting; ++i)
@@ -475,16 +475,10 @@ void td::Scheduler::counter_check_waiting_fibers(td::Scheduler::atomic_counter_t
     }
 }
 
-void td::Scheduler::counter_increment(td::Scheduler::atomic_counter_t& counter, uint32_t amount)
+void td::Scheduler::counter_increment(td::Scheduler::atomic_counter_t& counter, int amount)
 {
     auto previous = counter.count.fetch_add(amount);
     counter_check_waiting_fibers(counter, previous + amount);
-}
-
-void td::Scheduler::counter_decrement(td::Scheduler::atomic_counter_t& counter, uint32_t amount)
-{
-    auto previous = counter.count.fetch_sub(amount);
-    counter_check_waiting_fibers(counter, previous - amount);
 }
 
 td::Scheduler::Scheduler(scheduler_config const& config)
@@ -506,7 +500,7 @@ td::Scheduler::Scheduler(scheduler_config const& config)
     static_assert(invalid_counter == std::numeric_limits<counter_index_t>().max(), "Invalid counter index corrupt");
 }
 
-void td::Scheduler::submitTasks(td::container::Task* jobs, uint32_t num_jobs, td::sync& sync)
+void td::Scheduler::submitTasks(td::container::Task* jobs, unsigned num_jobs, td::sync& sync)
 {
     counter_index_t counter_index;
     if (sync.initialized)
@@ -542,7 +536,7 @@ void td::Scheduler::submitTasks(td::container::Task* jobs, uint32_t num_jobs, td
     RUNTIME_ASSERT(success && "Job queue is full, consider increasing config.max_num_jobs");
 }
 
-void td::Scheduler::wait(td::sync& sync, bool pinnned, uint32_t target)
+void td::Scheduler::wait(td::sync& sync, bool pinnned, int target)
 {
     // Skip uninitialized sync handles
     if (!sync.initialized)
@@ -551,10 +545,8 @@ void td::Scheduler::wait(td::sync& sync, bool pinnned, uint32_t target)
         return;
     }
 
-    if (_counter_handles.isExpired(sync.handle))
-    {
-        RUNTIME_ASSERT(false && "Attempted to wait on an expired sync, consider increasing scheduler::max_handles_in_flight");
-    }
+    RUNTIME_ASSERT(!_counter_handles.isExpired(sync.handle) && "Attempted to wait on an expired sync, consider increasing scheduler::max_handles_in_flight");
+    ASSERT(target >= 0 && "Negative counter target");
 
     auto const counter_index = _counter_handles.get(sync.handle);
 
@@ -629,7 +621,7 @@ void td::Scheduler::start(td::container::Task main_task)
         if constexpr (s_use_workstealing)
         {
             thread_deques.reserve(_num_threads);
-            for (auto i = 0; i < _num_threads; ++i)
+            for (auto i = 0u; i < _num_threads; ++i)
                 thread_deques.push_back(std::make_shared<container::spmc::Deque<container::Task>>(8));
 
             s_tls.prepare_chase_lev(thread_deques, 0);
@@ -645,7 +637,7 @@ void td::Scheduler::start(td::container::Task main_task)
 
             // Prepare worker arg
             callback_funcs::worker_arg_t* const worker_arg = new callback_funcs::worker_arg_t{i, this, thread_deques};
-            auto success = native::create_thread(uint32_t(_fiber_stack_size) + thread_stack_overhead_safety, callback_funcs::worker_func, worker_arg,
+            auto success = native::create_thread(unsigned(_fiber_stack_size) + thread_stack_overhead_safety, callback_funcs::worker_func, worker_arg,
                                                  i, &thread.native);
             ASSERT(success && "Failed to create worker thread");
         }

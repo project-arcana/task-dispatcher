@@ -1,7 +1,8 @@
 #pragma once
 
 #include <atomic>
-#include <cstdint>
+
+#include <clean-core/typedefs.hh>
 
 #include <task-dispatcher/common/system_info.hh>
 
@@ -20,11 +21,11 @@ struct fiber_t;
 
 struct scheduler_config
 {
-    uint32_t num_fibers = 256;
-    uint32_t num_threads = system::hardware_concurrency;
-    uint32_t max_num_counters = 512;
-    uint32_t max_num_jobs = 4096;
-    size_t fiber_stack_size = 64 * 1024;
+    unsigned num_fibers = 256;
+    unsigned num_threads = system::hardware_concurrency;
+    unsigned max_num_counters = 512;
+    unsigned max_num_jobs = 4096;
+    cc::size_t fiber_stack_size = 64 * 1024;
 
     // Some values in this config must be a power of 2
     // Round up all values to the next power of 2
@@ -54,9 +55,9 @@ public:
     void start(container::Task main_task);
 
     // Enqueue the given tasks and associate them with a sync object
-    void submitTasks(container::Task* jobs, uint32_t num_jobs, td::sync& sync);
+    void submitTasks(container::Task* jobs, unsigned num_jobs, td::sync& sync);
     // Resume execution after the given sync object has reached a set target
-    void wait(td::sync& sync, bool pinnned = false, uint32_t target = 0);
+    void wait(td::sync& sync, bool pinnned = false, int target = 0);
 
     // The scheduler running the current task
     static Scheduler& current() { return *s_current_scheduler; }
@@ -67,15 +68,15 @@ private:
     static thread_local Scheduler* s_current_scheduler;
 
 public:
-    using fiber_index_t = uint16_t;
-    using thread_index_t = uint8_t;
-    using counter_index_t = uint16_t;
+    using fiber_index_t = unsigned;
+    using thread_index_t = unsigned;
+    using counter_index_t = cc::uint16; // Must fit into task metadata
     static auto constexpr invalid_fiber = fiber_index_t(-1);
     static auto constexpr invalid_thread = thread_index_t(-1);
     static auto constexpr invalid_counter = counter_index_t(-1);
 
 private:
-    enum class fiber_destination_e : uint8_t;
+    enum class fiber_destination_e : cc::uint8;
     struct worker_thread_t;
     struct worker_fiber_t;
     struct atomic_counter_t;
@@ -122,11 +123,10 @@ private:
     bool get_next_job(container::Task& job);
     bool try_resume_fiber(fiber_index_t fiber);
 
-    bool counter_add_waiting_fiber(atomic_counter_t& counter, fiber_index_t fiber_index, thread_index_t pinned_thread_index, uint32_t counter_target);
-    void counter_check_waiting_fibers(atomic_counter_t& counter, uint32_t value);
+    bool counter_add_waiting_fiber(atomic_counter_t& counter, fiber_index_t fiber_index, thread_index_t pinned_thread_index, int counter_target);
+    void counter_check_waiting_fibers(atomic_counter_t& counter, int value);
 
-    void counter_increment(atomic_counter_t& counter, uint32_t amount = 1);
-    void counter_decrement(atomic_counter_t& counter, uint32_t amount = 1);
+    void counter_increment(atomic_counter_t& counter, int amount = 1);
 
     Scheduler(Scheduler const& other) = delete;
     Scheduler(Scheduler&& other) noexcept = delete;
