@@ -59,13 +59,14 @@ private:
 // free. This restriction allows task to be almost POD, but makes usage of this struct outside of rigid scenarios inadvisable.
 struct Task
 {
-private:
+public:
     using default_metadata_t = cc::uint16;
     static auto constexpr task_size = td::system::l1_cacheline_size;
     static auto constexpr metadata_size = sizeof(default_metadata_t);
     static auto constexpr usable_buffer_size = task_size - metadata_size;
     static_assert(sizeof(detail::FuncPtrWrapper) <= usable_buffer_size, "task is too small to hold func_ptr_wrapper");
 
+private:
     union {
         cc::uint64 mFirstQword = 0;
         cc::byte mBuffer[task_size];
