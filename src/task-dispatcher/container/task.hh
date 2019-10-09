@@ -1,8 +1,9 @@
 #pragma once
 
-#include <cstdint>
 #include <utility> // std::move, std::forward, std::enable_if_t, std::is_invocable_r_v
+#include <new>
 
+#include <clean-core/typedefs.hh>
 #include <clean-core/assert.hh>
 
 #include <task-dispatcher/common/system_info.hh>
@@ -23,6 +24,11 @@ struct LambdaWrapper final : CallableWrapper
     explicit LambdaWrapper(T&& t) : mLambda(std::move(t)) {}
     void call() final override { mLambda(); }
 
+    LambdaWrapper(LambdaWrapper const&) = delete;
+    LambdaWrapper(LambdaWrapper&&) noexcept = delete;
+    LambdaWrapper& operator=(LambdaWrapper const&) = delete;
+    LambdaWrapper& operator=(LambdaWrapper&&) noexcept = delete;
+
 private:
     T mLambda;
 };
@@ -30,8 +36,14 @@ private:
 struct FuncPtrWrapper final : CallableWrapper
 {
     using func_ptr_t = void (*)(void* userdata);
+
     explicit FuncPtrWrapper(func_ptr_t func_ptr, void* userdata) : func_ptr(func_ptr), userdata(userdata) {}
     void call() final override;
+
+    FuncPtrWrapper(FuncPtrWrapper const&) = delete;
+    FuncPtrWrapper(FuncPtrWrapper&&) noexcept = delete;
+    FuncPtrWrapper& operator=(FuncPtrWrapper const&) = delete;
+    FuncPtrWrapper& operator=(FuncPtrWrapper&&) noexcept = delete;
 
 private:
     func_ptr_t func_ptr;
@@ -48,15 +60,15 @@ private:
 struct Task
 {
 private:
-    using default_metadata_t = uint16_t;
+    using default_metadata_t = cc::uint16;
     static auto constexpr task_size = td::system::l1_cacheline_size;
     static auto constexpr metadata_size = sizeof(default_metadata_t);
     static auto constexpr usable_buffer_size = task_size - metadata_size;
     static_assert(sizeof(detail::FuncPtrWrapper) <= usable_buffer_size, "task is too small to hold func_ptr_wrapper");
 
     union {
-        uint64_t mFirstQword = 0;
-        char mBuffer[task_size];
+        cc::uint64 mFirstQword = 0;
+        cc::byte mBuffer[task_size];
     };
 
 public:
@@ -81,7 +93,7 @@ public:
     template <class T, std::enable_if_t<std::is_invocable_r_v<void, T>, int> = 0>
     void lambda(T&& l)
     {
-        ASSERT(!isValid()); // && "Re-initialized task");
+        ASSERT(!isValid() && "Re-initialized task");
         static_assert(sizeof(detail::LambdaWrapper<T>) <= usable_buffer_size, "Lambda capture exceeds task buffer size");
         new (static_cast<void*>(mBuffer)) detail::LambdaWrapper(std::forward<T>(l));
     }
@@ -89,7 +101,7 @@ public:
     // From function pointer and userdata void*
     void ptr(detail::FuncPtrWrapper::func_ptr_t func_ptr, void* userdata = nullptr)
     {
-        ASSERT(!isValid()); // && "Re-initialized task");
+        ASSERT(!isValid() && "Re-initialized task");
         new (static_cast<void*>(mBuffer)) detail::FuncPtrWrapper(func_ptr, userdata);
     }
 
@@ -99,7 +111,7 @@ public:
     void setMetadata(T data)
     {
         static_assert(sizeof(T) <= metadata_size, "Metadata too large");
-        *reinterpret_cast<T*>(static_cast<void*>(mBuffer + usable_buffer_size)) = data;
+        *static_cast<T*>(static_cast<void*>(mBuffer + usable_buffer_size)) = data;
     }
 
     // Read metadata from the reserved block
@@ -107,23 +119,22 @@ public:
     T getMetadata() const
     {
         static_assert(sizeof(T) <= sizeof(metadata_size), "Metadata too large");
-        return *reinterpret_cast<T const*>(static_cast<void const*>(mBuffer + usable_buffer_size));
+        return *static_cast<T const*>(static_cast<void const*>(mBuffer + usable_buffer_size));
     }
 
     // Execute the contained task
     void execute()
     {
-        ASSERT(isValid()); //, "Executed uninitialized task");
+        ASSERT(isValid() && "Executed uninitialized task");
         (*reinterpret_cast<detail::CallableWrapper*>(mBuffer)).call();
     }
 
     // Clean up the possibly stored lambda, invalidating the task
     void cleanup()
     {
+        ASSERT(isValid() && "Cleaned up uninitialized task");
         (*reinterpret_cast<detail::CallableWrapper*>(mBuffer)).~CallableWrapper();
-#ifdef CC_ENABLE_ASSERTIONS
-        invalidate(); // Invalidation is only required for assert checks
-#endif
+        ASSERT((invalidate(), true)); // Invalidation is only required for assert checks
     }
 
     // Execute the contained task and clean it up afterwards (invalidates task)
