@@ -113,7 +113,7 @@ inline void wait_for_event(event_t& eventId, uint32_t milliseconds)
         ::ResetEvent(eventId.event);
     }
 
-    ASSERT(retval != WAIT_FAILED && prev != 0 && "Failed to wait on native event");
+    CC_ASSERT(retval != WAIT_FAILED && prev != 0 && "Failed to wait on native event");
 }
 
 inline void signal_event(event_t eventId)

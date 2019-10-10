@@ -94,7 +94,7 @@ public:
     template <class T, std::enable_if_t<std::is_invocable_r_v<void, T>, int> = 0>
     void lambda(T&& l)
     {
-        ASSERT(!isValid() && "Re-initialized task");
+        CC_ASSERT(!isValid() && "Re-initialized task");
         static_assert(sizeof(detail::LambdaWrapper<T>) <= usable_buffer_size, "Lambda capture exceeds task buffer size");
         new (static_cast<void*>(mBuffer)) detail::LambdaWrapper(std::forward<T>(l));
     }
@@ -102,7 +102,7 @@ public:
     // From function pointer and userdata void*
     void ptr(detail::FuncPtrWrapper::func_ptr_t func_ptr, void* userdata = nullptr)
     {
-        ASSERT(!isValid() && "Re-initialized task");
+        CC_ASSERT(!isValid() && "Re-initialized task");
         new (static_cast<void*>(mBuffer)) detail::FuncPtrWrapper(func_ptr, userdata);
     }
 
@@ -126,16 +126,16 @@ public:
     // Execute the contained task
     void execute()
     {
-        ASSERT(isValid() && "Executed uninitialized task");
+        CC_ASSERT(isValid() && "Executed uninitialized task");
         (*reinterpret_cast<detail::CallableWrapper*>(mBuffer)).call();
     }
 
     // Clean up the possibly stored lambda, invalidating the task
     void cleanup()
     {
-        ASSERT(isValid() && "Cleaned up uninitialized task");
+        CC_ASSERT(isValid() && "Cleaned up uninitialized task");
         (*reinterpret_cast<detail::CallableWrapper*>(mBuffer)).~CallableWrapper();
-        ASSERT((invalidate(), true)); // Invalidation is only required for assert checks
+        CC_ASSERT((invalidate(), true)); // Invalidation is only required for assert checks
     }
 
     // Execute the contained task and clean it up afterwards (invalidates task)

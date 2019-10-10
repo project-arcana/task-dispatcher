@@ -47,7 +47,7 @@ public:
 
     void enqueue(T const& val)
     {
-        ASSERT(!full() && "FIFOQueue Full");
+        CC_ASSERT(!full() && "FIFOQueue Full");
 
         if (empty())
             mTail = 0;
