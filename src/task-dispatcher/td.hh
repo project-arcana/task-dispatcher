@@ -1,5 +1,6 @@
 #pragma once
 
+#include <algorithm>
 #include <memory>
 #include <tuple>
 
@@ -196,12 +197,12 @@ void submit_batched(sync& sync, F&& func, unsigned n, unsigned num_batches_targe
 {
     static_assert(std::is_invocable_v<F, unsigned, unsigned>, "function must be invocable with batch start and end argument");
     static_assert(std::is_same_v<std::invoke_result_t<F, unsigned, unsigned>, void>, "return must be void");
-    auto batch_size = int_div_ceil(n, num_batches_target);
-    auto num_batches = int_div_ceil(n, batch_size);
+    auto batch_size = detail::int_div_ceil(n, num_batches_target);
+    auto num_batches = detail::int_div_ceil(n, batch_size);
     auto tasks = new container::Task[num_batches];
 
-    for (auto batch = 0u, batchStart = 0u, batchEnd = min(batch_size, n); batch < num_batches;
-         ++batch, batchStart = batch * batch_size, batchEnd = min((batch + 1) * batch_size, n))
+    for (auto batch = 0u, batchStart = 0u, batchEnd = std::min(batch_size, n); batch < num_batches;
+         ++batch, batchStart = batch * batch_size, batchEnd = std::min((batch + 1) * batch_size, n))
         tasks[batch].lambda([=] { func(batchStart, batchEnd); });
 
     submit_raw(sync, tasks, num_batches);
@@ -260,8 +261,9 @@ template <class F, class... Args>
         R* const result_ptr = res.get_raw_pointer();
 
         // A lambda callung fun(args...), but moving the args instead of copying them into the lambda
-        container::Task dispatch(
-            [fun, result_ptr, tup = std::make_tuple(std::move(args)...)] { std::apply([&fun, &result_ptr](auto&&... args) { *result_ptr = fun(decltype(args)(args)...); }, tup); });
+        container::Task dispatch([fun, result_ptr, tup = std::make_tuple(std::move(args)...)] {
+            std::apply([&fun, &result_ptr](auto&&... args) { *result_ptr = fun(decltype(args)(args)...); }, tup);
+        });
 
         submit_raw(s, &dispatch, 1);
         res.set_sync(s);
