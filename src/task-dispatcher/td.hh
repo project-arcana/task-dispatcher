@@ -27,8 +27,8 @@ constexpr T int_div_ceil(T a, T b)
 // ==========
 // Wait
 
-inline void wait_for(sync& sync) { Scheduler::current().wait(sync, true); }
-inline void wait_for_unpinned(sync& sync) { Scheduler::current().wait(sync); }
+inline void wait_for(sync& sync) { Scheduler::current().wait(sync, true, 0); }
+inline void wait_for_unpinned(sync& sync) { Scheduler::current().wait(sync, false, 0); }
 
 template <class... STs>
 void wait_for(STs&... syncs)

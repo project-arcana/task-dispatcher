@@ -519,7 +519,7 @@ void td::Scheduler::submitTasks(td::container::Task* jobs, unsigned num_jobs, td
         sync.initialized = true;
     }
 
-    counter_increment(_counters[counter_index], num_jobs);
+    counter_increment(_counters[counter_index], int(num_jobs));
 
     // TODO: Multi-enqueue
     bool success = true;
