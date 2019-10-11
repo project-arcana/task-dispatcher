@@ -83,8 +83,14 @@ public:
 
     future(future&) = delete;
     future& operator=(future&) = delete;
-    future(future&&) noexcept = default;
-    future& operator=(future&&) noexcept = default;
+
+    future(future&& rhs) noexcept : mSync(rhs.mSync), mValue(std::move(rhs.mValue)) { rhs.mSync.initialized = false; }
+    future& operator=(future&& rhs) noexcept
+    {
+        mSync = rhs.mSync;
+        mValue = std::move(rhs.mValue);
+        rhs.mSync.initialized = false;
+    }
 };
 
 // ==========
