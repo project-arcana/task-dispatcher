@@ -44,7 +44,7 @@ void wait_for_unpinned(STs&... syncs)
 
 
 // ==========
-// Getter / Miscelaneous
+// Getter / Miscellaneous
 
 [[nodiscard]] inline bool is_scheduler_alive() { return Scheduler::isInsideScheduler(); }
 
