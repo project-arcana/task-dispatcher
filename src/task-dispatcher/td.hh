@@ -5,6 +5,7 @@
 #include <tuple>
 
 #include <clean-core/assert.hh>
+#include <clean-core/defer.hh>
 #include <clean-core/span.hh>
 
 #include "container/task.hh"
@@ -22,6 +23,9 @@ constexpr T int_div_ceil(T a, T b)
 {
     return 1 + ((a - 1) / b);
 }
+
+[[nodiscard]] inline container::Task* alloc_tasks(size_t num) { return new container::Task[num]; }
+inline void dealloc_tasks(container::Task* ptr) { delete[] ptr; }
 }
 
 // ==========
@@ -174,11 +178,13 @@ void submit_n(sync& sync, F&& func, unsigned n)
 {
     static_assert(std::is_invocable_v<F, unsigned>, "function must be invocable with index argument");
     static_assert(std::is_same_v<std::invoke_result_t<F, unsigned>, void>, "return must be void");
-    auto tasks = new container::Task[n];
+
+    auto const tasks = detail::alloc_tasks(n);
+    CC_DEFER { detail::dealloc_tasks(tasks); };
+
     for (auto i = 0u; i < n; ++i)
         tasks[i].lambda([=] { func(i); });
     submit_raw(sync, tasks, n);
-    delete[] tasks;
 }
 
 // Lambda called for each element with element reference
@@ -188,13 +194,13 @@ void submit_each(sync& sync, F&& func, cc::span<T> vals)
     static_assert(std::is_invocable_v<F, T&>, "function must be invocable with element reference");
     static_assert(std::is_same_v<std::invoke_result_t<F, T&>, void>, "return must be void");
 
-    auto tasks = new container::Task[vals.size()];
+    auto const tasks = detail::alloc_tasks(vals.size());
+    CC_DEFER { detail::dealloc_tasks(tasks); };
 
     for (auto i = 0u; i < vals.size(); ++i)
         tasks[i].lambda([func, val_ptr = vals.data() + i] { func(*val_ptr); });
 
     submit_raw(sync, tasks, unsigned(vals.size()));
-    delete[] tasks;
 }
 
 // Lambda called for each batch, with batch start and end
@@ -203,16 +209,18 @@ void submit_batched(sync& sync, F&& func, unsigned n, unsigned num_batches_targe
 {
     static_assert(std::is_invocable_v<F, unsigned, unsigned>, "function must be invocable with batch start and end argument");
     static_assert(std::is_same_v<std::invoke_result_t<F, unsigned, unsigned>, void>, "return must be void");
+
     auto batch_size = detail::int_div_ceil(n, num_batches_target);
     auto num_batches = detail::int_div_ceil(n, batch_size);
-    auto tasks = new container::Task[num_batches];
+
+    auto const tasks = detail::alloc_tasks(num_batches);
+    CC_DEFER { detail::dealloc_tasks(tasks); };
 
     for (auto batch = 0u, batchStart = 0u, batchEnd = std::min(batch_size, n); batch < num_batches;
          ++batch, batchStart = batch * batch_size, batchEnd = std::min((batch + 1) * batch_size, n))
         tasks[batch].lambda([=] { func(batchStart, batchEnd); });
 
     submit_raw(sync, tasks, num_batches);
-    delete[] tasks;
 }
 
 // ==========
