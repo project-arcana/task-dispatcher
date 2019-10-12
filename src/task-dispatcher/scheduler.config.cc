@@ -6,7 +6,7 @@ void td::scheduler_config::ceil_to_pow2()
 {
     num_fibers = math::nextpow2(num_fibers);
     max_num_counters = math::nextpow2(max_num_counters);
-    max_num_jobs = math::nextpow2(max_num_jobs);
+    max_num_tasks = math::nextpow2(max_num_tasks);
 }
 
 bool td::scheduler_config::is_valid() const
@@ -19,12 +19,12 @@ bool td::scheduler_config::is_valid() const
     valid &= is_positive(num_fibers);
     valid &= is_positive(num_threads);
     valid &= is_positive(max_num_counters);
-    valid &= is_positive(max_num_jobs);
+    valid &= is_positive(max_num_tasks);
 
     // Powers of 2
     valid &= math::ispow2(num_fibers);
     valid &= math::ispow2(max_num_counters);
-    valid &= math::ispow2(max_num_jobs);
+    valid &= math::ispow2(max_num_tasks);
 
     // Valid number of fibers, threads and counters
     valid &= bool(num_fibers < Scheduler::invalid_fiber);

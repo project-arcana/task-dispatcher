@@ -90,16 +90,16 @@ public:
 public:
     // == Deferred initialization ==
 
-    // From a lambda of the form void(void)
+    // From a lambda of the form void()
     template <class T, std::enable_if_t<std::is_invocable_r_v<void, T>, int> = 0>
     void lambda(T&& l)
     {
         CC_ASSERT(!isValid() && "Re-initialized task");
         static_assert(sizeof(detail::LambdaWrapper<T>) <= usable_buffer_size, "Lambda capture exceeds task buffer size");
-        new (static_cast<void*>(mBuffer)) detail::LambdaWrapper(std::forward<T>(l));
+        new (static_cast<void*>(mBuffer)) detail::LambdaWrapper<T>(std::forward<T>(l));
     }
 
-    // From function pointer and userdata void*
+    // From function pointer of the form void(void*) and userdata void*
     void ptr(detail::FuncPtrWrapper::func_ptr_t func_ptr, void* userdata = nullptr)
     {
         CC_ASSERT(!isValid() && "Re-initialized task");

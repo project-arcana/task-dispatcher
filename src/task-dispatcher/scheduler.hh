@@ -24,7 +24,7 @@ struct scheduler_config
     unsigned num_fibers = 256;
     unsigned num_threads = system::hardware_concurrency;
     unsigned max_num_counters = 512;
-    unsigned max_num_jobs = 4096;
+    unsigned max_num_tasks = 4096;
     cc::size_t fiber_stack_size = 64 * 1024;
 
     // Some values in this config must be a power of 2
@@ -38,11 +38,11 @@ struct scheduler_config
     bool validate();
 };
 
-// Fiber-based job scheduler
+// Fiber-based task scheduler
 // Never allocates after the main task starts executing, supports custom allocators
 // Never throws or behaves erroneously, crashes immediately on any fatal error
-// ::run_jobs and ::wait must only be called from scheduler tasks
-// td::sync objects passed to ::run_jobs must eventually be waited upon using ::wait
+// submitTasks and wait must only be called from scheduler tasks
+// td::sync objects passed to submitTasks must eventually be waited upon using wait
 class Scheduler
 {
 public:
@@ -55,14 +55,14 @@ public:
     void start(container::Task main_task);
 
     // Enqueue the given tasks and associate them with a sync object
-    void submitTasks(container::Task* jobs, unsigned num_jobs, td::sync& sync);
+    void submitTasks(container::Task* tasks, unsigned num_tasks, td::sync& sync);
     // Resume execution after the given sync object has reached a set target
     void wait(td::sync& sync, bool pinnned = false, int target = 0);
 
     // The scheduler running the current task
-    static Scheduler& current() { return *s_current_scheduler; }
+    [[nodiscard]] static Scheduler& current() { return *s_current_scheduler; }
     // Returns true if called from inside the scheduler
-    static bool isInsideScheduler() { return s_current_scheduler != nullptr; }
+    [[nodiscard]] static bool isInsideScheduler() { return s_current_scheduler != nullptr; }
 
 private:
     static thread_local Scheduler* s_current_scheduler;
@@ -82,30 +82,30 @@ private:
     struct atomic_counter_t;
 
 private:
-    size_t const _fiber_stack_size;
-    std::atomic_bool _shutting_down = {false};
+    size_t const mFiberStackSize;
+    std::atomic_bool mIsShuttingDown = {false};
 
     // Threads
-    worker_thread_t* _threads;
-    thread_index_t const _num_threads;
+    worker_thread_t* mThreads;
+    thread_index_t const mNumThreads;
 
     // Fibers
-    worker_fiber_t* _fibers;
-    fiber_index_t const _num_fibers;
+    worker_fiber_t* mFibers;
+    fiber_index_t const mNumFibers;
 
     // Counters
-    atomic_counter_t* _counters;
-    counter_index_t const _num_counters;
+    atomic_counter_t* mCounters;
+    counter_index_t const mNumCounters;
 
     // Queues
-    container::MPMCQueue<container::Task> _jobs;
-    container::MPMCQueue<fiber_index_t> _idle_fibers;
-    container::MPMCQueue<fiber_index_t> _resumable_fibers;
-    container::MPMCQueue<counter_index_t> _free_counters;
+    container::MPMCQueue<container::Task> mTasks;
+    container::MPMCQueue<fiber_index_t> mIdleFibers;
+    container::MPMCQueue<fiber_index_t> mResumableFibers;
+    container::MPMCQueue<counter_index_t> mFreeCounters;
 
     // User handles
     static auto constexpr max_handles_in_flight = 512;
-    container::VersionRing<counter_index_t, max_handles_in_flight> _counter_handles;
+    container::VersionRing<counter_index_t, max_handles_in_flight> mCounterHandles;
 
 private:
     // Callbacks, wrapped into a friend struct for member access
@@ -114,19 +114,19 @@ private:
     friend struct scheduler_config;
 
 private:
-    fiber_index_t acquire_free_fiber();
-    counter_index_t acquire_free_counter();
+    fiber_index_t acquireFreeFiber();
+    counter_index_t acquireFreeCounter();
 
-    void yield_to_fiber(fiber_index_t target_fiber, fiber_destination_e own_destination);
-    void clean_up_prev_fiber();
+    void yieldToFiber(fiber_index_t target_fiber, fiber_destination_e own_destination);
+    void cleanUpPrevFiber();
 
-    bool get_next_job(container::Task& job);
-    bool try_resume_fiber(fiber_index_t fiber);
+    bool getNextTask(container::Task& task);
+    bool tryResumeFiber(fiber_index_t fiber);
 
-    bool counter_add_waiting_fiber(atomic_counter_t& counter, fiber_index_t fiber_index, thread_index_t pinned_thread_index, int counter_target);
-    void counter_check_waiting_fibers(atomic_counter_t& counter, int value);
+    bool counterAddWaitingFiber(atomic_counter_t& counter, fiber_index_t fiber_index, thread_index_t pinned_thread_index, int counter_target);
+    void counterCheckWaitingFibers(atomic_counter_t& counter, int value);
 
-    void counter_increment(atomic_counter_t& counter, int amount = 1);
+    void counterIncrement(atomic_counter_t& counter, int amount = 1);
 
     Scheduler(Scheduler const& other) = delete;
     Scheduler(Scheduler&& other) noexcept = delete;
