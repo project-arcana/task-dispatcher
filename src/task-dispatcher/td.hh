@@ -58,7 +58,7 @@ struct future
 {
 private:
     sync mSync;
-    std::shared_ptr<T> const mValue;
+    std::shared_ptr<T> mValue;
 
 public:
     [[nodiscard]] T const& get()
