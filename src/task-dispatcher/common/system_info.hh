@@ -1,5 +1,7 @@
 #pragma once
 
+#include <cstddef>
+
 namespace td::system
 {
 // == Compile time system info ==

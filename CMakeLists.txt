@@ -29,6 +29,11 @@ endif()
 if (MSVC)
     target_compile_options(task-dispatcher PUBLIC /MP)
 else()
+    # Pthread
+    set(THREADS_PREFER_PTHREAD_FLAG ON)
+    find_package(Threads REQUIRED)
+    target_link_libraries(task-dispatcher PRIVATE Threads::Threads)
+
     target_compile_options(task-dispatcher PRIVATE -Wall -fPIC)
     target_link_libraries(task-dispatcher PUBLIC -fuse-ld=gold)
 endif()
