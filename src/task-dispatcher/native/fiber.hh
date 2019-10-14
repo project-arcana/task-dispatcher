@@ -25,6 +25,7 @@
 
 #include <cstdint>
 #include <cstring>
+#include <cstdlib>
 
 #endif
 
@@ -33,9 +34,9 @@ namespace td::native
 // malloc passthrough, might want to capitalize on this later
 struct allocator
 {
-    void* alloc(size_t size) { return ::malloc(size); }
+    void* alloc(size_t size) const { return ::malloc(size); }
 
-    void free(void* block) { return ::free(block); }
+    void free(void* block) const { return ::free(block); }
 };
 
 inline auto constexpr default_alloc = allocator{};
