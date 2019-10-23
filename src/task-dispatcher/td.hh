@@ -172,6 +172,20 @@ void submit(sync& s, F&& fun, Args&&... args)
     submit_raw(s, &dispatch, 1);
 }
 
+// Pointer to member function with arguments - sync return variant, with optional return type
+template <class F, class FObj, class... Args, std::enable_if_t<std::is_member_function_pointer_v<F>, int> = 0>
+void submit(sync& s, F func, FObj& inst, Args&&... args)
+{
+    static_assert(std::is_invocable_v<F, FObj, Args...>, "function must be invocable with the given args");
+    static_assert(std::is_same_v<std::invoke_result_t<F, FObj, Args...>, void>, "return must be void");
+    // A lambda calling fun(args...), but moving the args instead of copying them into the lambda
+    container::Task dispatch([func, inst_ptr = &inst, tup = std::make_tuple(std::move(args)...)] {
+        std::apply([&func, &inst_ptr](auto&&... args) { (inst_ptr->*func)(decltype(args)(args)...); }, tup);
+    });
+
+    submit_raw(s, &dispatch, 1);
+}
+
 // Lambda called n times with index argument
 template <class F>
 void submit_n(sync& sync, F&& func, unsigned n)
@@ -253,38 +267,37 @@ template <class F>
 
 // Pointer to member function with arguments - sync return variant, with optional return type
 template <class F, class FObj, class... Args, std::enable_if_t<std::is_member_function_pointer_v<F>, int> = 0>
-[[nodiscard]] auto submit_nonoverload(F func, FObj& inst, Args&&... args)
+[[nodiscard]] auto submit(F func, FObj& inst, Args&&... args)
 {
-    static_assert (sizeof (FObj) == 0, "Unimplemented");
-//    static_assert(std::is_invocable_v<F, Args...>, "function must be invocable with the given args");
-//    using R = std::decay_t<std::invoke_result_t<F, Args...>>;
-//    if constexpr (std::is_same_v<R, void>)
-//    {
-//        sync res;
+    static_assert(std::is_invocable_v<F, FObj, Args...>, "function must be invocable with the given args");
+    using R = std::decay_t<std::invoke_result_t<F, FObj, Args...>>;
+    if constexpr (std::is_same_v<R, void>)
+    {
+        sync res;
 
-//        // A lambda calling fun(args...), but moving the args instead of copying them into the lambda
-//        container::Task dispatch([func, inst_ptr = &inst, tup = std::make_tuple(std::move(args)...)] {
-//            std::apply([&func, &inst_ptr](auto&&... args) { (inst_ptr->*func)(decltype(args)(args)...); }, tup);
-//        });
+        // A lambda calling fun(args...), but moving the args instead of copying them into the lambda
+        container::Task dispatch([func, inst_ptr = &inst, tup = std::make_tuple(std::move(args)...)] {
+            std::apply([&func, &inst_ptr](auto&&... args) { (inst_ptr->*func)(decltype(args)(args)...); }, tup);
+        });
 
-//        submit_raw(res, &dispatch, 1);
-//        return res;
-//    }
-//    else
-//    {
-//        sync s;
-//        future<R> res;
-//        R* const result_ptr = res.get_raw_pointer();
+        submit_raw(res, &dispatch, 1);
+        return res;
+    }
+    else
+    {
+        sync s;
+        future<R> res;
+        R* const result_ptr = res.get_raw_pointer();
 
-//        // A lambda calling fun(args...), but moving the args instead of copying them into the lambda
-//        container::Task dispatch([func, inst_ptr = &inst, result_ptr, tup = std::make_tuple(std::move(args)...)] {
-//            std::apply([&func, &inst_ptr, &result_ptr](auto&&... args) { *result_ptr = (inst_ptr->*func)(decltype(args)(args)...); }, tup);
-//        });
+        // A lambda calling fun(args...), but moving the args instead of copying them into the lambda
+        container::Task dispatch([func, inst_ptr = &inst, result_ptr, tup = std::make_tuple(std::move(args)...)] {
+            std::apply([&func, &inst_ptr, &result_ptr](auto&&... args) { *result_ptr = (inst_ptr->*func)(decltype(args)(args)...); }, tup);
+        });
 
-//        submit_raw(s, &dispatch, 1);
-//        res.set_sync(s);
-//        return res;
-//    }
+        submit_raw(s, &dispatch, 1);
+        res.set_sync(s);
+        return res;
+    }
 }
 
 // Lambda with arguments - sync return variant, with optional return type
@@ -368,5 +381,4 @@ template <class F>
     submit_batched<F>(res, std::forward<F>(func), n, num_batches_target);
     return res;
 }
-
 }
