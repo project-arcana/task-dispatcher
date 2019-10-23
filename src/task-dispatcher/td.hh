@@ -1,8 +1,7 @@
 #pragma once
 
-#include <algorithm>
 #include <memory>
-#include <tuple>
+#include <tuple> // TODO: Replace with cc::tuple
 
 #include <clean-core/assert.hh>
 #include <clean-core/defer.hh>
@@ -22,6 +21,12 @@ template <class T = int>
 constexpr T int_div_ceil(T a, T b)
 {
     return 1 + ((a - 1) / b);
+}
+
+template <class T = int>
+constexpr T min(T a, T b)
+{
+    return a < b ? a : b;
 }
 
 [[nodiscard]] inline container::Task* alloc_tasks(size_t num) { return new container::Task[num]; }
@@ -230,8 +235,8 @@ void submit_batched(sync& sync, F&& func, unsigned n, unsigned num_batches_targe
     auto const tasks = detail::alloc_tasks(num_batches);
     CC_DEFER { detail::dealloc_tasks(tasks); };
 
-    for (auto batch = 0u, batchStart = 0u, batchEnd = std::min(batch_size, n); batch < num_batches;
-         ++batch, batchStart = batch * batch_size, batchEnd = std::min((batch + 1) * batch_size, n))
+    for (auto batch = 0u, batchStart = 0u, batchEnd = detail::min(batch_size, n); batch < num_batches;
+         ++batch, batchStart = batch * batch_size, batchEnd = detail::min((batch + 1) * batch_size, n))
         tasks[batch].lambda([=] { func(batchStart, batchEnd); });
 
     submit_raw(sync, tasks, num_batches);
