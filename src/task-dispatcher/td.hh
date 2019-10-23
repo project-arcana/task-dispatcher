@@ -1,8 +1,7 @@
 #pragma once
 
-#include <algorithm>
 #include <memory>
-#include <tuple>
+#include <tuple> // TODO: Replace with cc::tuple
 
 #include <clean-core/assert.hh>
 #include <clean-core/defer.hh>
@@ -22,6 +21,12 @@ template <class T = int>
 constexpr T int_div_ceil(T a, T b)
 {
     return 1 + ((a - 1) / b);
+}
+
+template <class T = int>
+constexpr T min(T a, T b)
+{
+    return a < b ? a : b;
 }
 
 [[nodiscard]] inline container::Task* alloc_tasks(size_t num) { return new container::Task[num]; }
@@ -172,6 +177,20 @@ void submit(sync& s, F&& fun, Args&&... args)
     submit_raw(s, &dispatch, 1);
 }
 
+// Pointer to member function with arguments - sync return variant, with optional return type
+template <class F, class FObj, class... Args, std::enable_if_t<std::is_member_function_pointer_v<F>, int> = 0>
+void submit(sync& s, F func, FObj& inst, Args&&... args)
+{
+    static_assert(std::is_invocable_v<F, FObj, Args...>, "function must be invocable with the given args");
+    static_assert(std::is_same_v<std::invoke_result_t<F, FObj, Args...>, void>, "return must be void");
+    // A lambda calling fun(args...), but moving the args instead of copying them into the lambda
+    container::Task dispatch([func, inst_ptr = &inst, tup = std::make_tuple(std::move(args)...)] {
+        std::apply([&func, &inst_ptr](auto&&... args) { (inst_ptr->*func)(decltype(args)(args)...); }, tup);
+    });
+
+    submit_raw(s, &dispatch, 1);
+}
+
 // Lambda called n times with index argument
 template <class F>
 void submit_n(sync& sync, F&& func, unsigned n)
@@ -216,8 +235,8 @@ void submit_batched(sync& sync, F&& func, unsigned n, unsigned num_batches_targe
     auto const tasks = detail::alloc_tasks(num_batches);
     CC_DEFER { detail::dealloc_tasks(tasks); };
 
-    for (auto batch = 0u, batchStart = 0u, batchEnd = std::min(batch_size, n); batch < num_batches;
-         ++batch, batchStart = batch * batch_size, batchEnd = std::min((batch + 1) * batch_size, n))
+    for (auto batch = 0u, batchStart = 0u, batchEnd = detail::min(batch_size, n); batch < num_batches;
+         ++batch, batchStart = batch * batch_size, batchEnd = detail::min((batch + 1) * batch_size, n))
         tasks[batch].lambda([=] { func(batchStart, batchEnd); });
 
     submit_raw(sync, tasks, num_batches);
@@ -251,11 +270,47 @@ template <class F>
     }
 }
 
+// Pointer to member function with arguments - sync return variant, with optional return type
+template <class F, class FObj, class... Args, std::enable_if_t<std::is_member_function_pointer_v<F>, int> = 0>
+[[nodiscard]] auto submit(F func, FObj& inst, Args&&... args)
+{
+    static_assert(std::is_invocable_v<F, FObj, Args...>, "function must be invocable with the given args");
+    using R = std::decay_t<std::invoke_result_t<F, FObj, Args...>>;
+    if constexpr (std::is_same_v<R, void>)
+    {
+        sync res;
+
+        // A lambda calling fun(args...), but moving the args instead of copying them into the lambda
+        container::Task dispatch([func, inst_ptr = &inst, tup = std::make_tuple(std::move(args)...)] {
+            std::apply([&func, &inst_ptr](auto&&... args) { (inst_ptr->*func)(decltype(args)(args)...); }, tup);
+        });
+
+        submit_raw(res, &dispatch, 1);
+        return res;
+    }
+    else
+    {
+        sync s;
+        future<R> res;
+        R* const result_ptr = res.get_raw_pointer();
+
+        // A lambda calling fun(args...), but moving the args instead of copying them into the lambda
+        container::Task dispatch([func, inst_ptr = &inst, result_ptr, tup = std::make_tuple(std::move(args)...)] {
+            std::apply([&func, &inst_ptr, &result_ptr](auto&&... args) { *result_ptr = (inst_ptr->*func)(decltype(args)(args)...); }, tup);
+        });
+
+        submit_raw(s, &dispatch, 1);
+        res.set_sync(s);
+        return res;
+    }
+}
+
 // Lambda with arguments - sync return variant, with optional return type
-template <class F, class... Args>
+template <class F, class... Args, std::enable_if_t<std::is_invocable_v<F, Args...> && !std::is_member_function_pointer_v<F>, int> = 0>
 [[nodiscard]] auto submit(F&& fun, Args&&... args)
 {
     static_assert(std::is_invocable_v<F, Args...>, "function must be invocable with the given args");
+    static_assert(!std::is_member_function_pointer_v<F>, "function must not be a function pointer");
     using R = std::decay_t<std::invoke_result_t<F, Args...>>;
     if constexpr (std::is_same_v<R, void>)
     {
@@ -331,5 +386,4 @@ template <class F>
     submit_batched<F>(res, std::forward<F>(func), n, num_batches_target);
     return res;
 }
-
 }
