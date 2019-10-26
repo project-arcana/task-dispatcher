@@ -1,10 +1,10 @@
 #pragma once
 
-#include <utility> // std::move, std::forward, std::enable_if_t, std::is_invocable_r_v
-#include <new>
+#include <utility>
 
-#include <clean-core/typedefs.hh>
 #include <clean-core/assert.hh>
+#include <clean-core/new.hh>
+#include <clean-core/typedefs.hh>
 
 #include <task-dispatcher/common/system_info.hh>
 
@@ -12,42 +12,42 @@ namespace td::container
 {
 namespace detail
 {
-struct CallableWrapper
+struct callable_wrapper
 {
-    virtual ~CallableWrapper();
+    virtual ~callable_wrapper();
     virtual void call() = 0;
 };
 
 template <class T, std::enable_if_t<std::is_invocable_r_v<void, T>, int> = 0>
-struct LambdaWrapper final : CallableWrapper
+struct lambda_wrapper final : callable_wrapper
 {
-    explicit LambdaWrapper(T&& t) : mLambda(std::move(t)) {}
-    void call() final override { mLambda(); }
+    explicit lambda_wrapper(T&& t) : _lambda(std::move(t)) {}
+    void call() final override { _lambda(); }
 
-    LambdaWrapper(LambdaWrapper const&) = delete;
-    LambdaWrapper(LambdaWrapper&&) noexcept = delete;
-    LambdaWrapper& operator=(LambdaWrapper const&) = delete;
-    LambdaWrapper& operator=(LambdaWrapper&&) noexcept = delete;
+    lambda_wrapper(lambda_wrapper const&) = delete;
+    lambda_wrapper(lambda_wrapper&&) noexcept = delete;
+    lambda_wrapper& operator=(lambda_wrapper const&) = delete;
+    lambda_wrapper& operator=(lambda_wrapper&&) noexcept = delete;
 
 private:
-    T mLambda;
+    T _lambda;
 };
 
-struct FuncPtrWrapper final : CallableWrapper
+struct func_ptr_wrapper final : callable_wrapper
 {
-    using func_ptr_t = void (*)(void* userdata);
+    using func_ptr_t = void (*)(void* _userdata);
 
-    explicit FuncPtrWrapper(func_ptr_t func_ptr, void* userdata) : func_ptr(func_ptr), userdata(userdata) {}
+    explicit func_ptr_wrapper(func_ptr_t func_ptr, void* userdata) : _func_ptr(func_ptr), _userdata(userdata) {}
     void call() final override;
 
-    FuncPtrWrapper(FuncPtrWrapper const&) = delete;
-    FuncPtrWrapper(FuncPtrWrapper&&) noexcept = delete;
-    FuncPtrWrapper& operator=(FuncPtrWrapper const&) = delete;
-    FuncPtrWrapper& operator=(FuncPtrWrapper&&) noexcept = delete;
+    func_ptr_wrapper(func_ptr_wrapper const&) = delete;
+    func_ptr_wrapper(func_ptr_wrapper&&) noexcept = delete;
+    func_ptr_wrapper& operator=(func_ptr_wrapper const&) = delete;
+    func_ptr_wrapper& operator=(func_ptr_wrapper&&) noexcept = delete;
 
 private:
-    func_ptr_t func_ptr;
-    void* userdata;
+    func_ptr_t _func_ptr;
+    void* _userdata;
 };
 }
 
@@ -57,35 +57,35 @@ private:
 // NOTE: If initialized from a lambda, cleanup() must get called exactly once on any copy of that instance, before the last of them is
 // either destroyed or re-initialized. Zero calls could leak captured non-trivial-dtor types like std::vector, more than one call would read after
 // free. This restriction allows task to be almost POD, but makes usage of this struct outside of rigid scenarios inadvisable.
-struct Task
+struct task
 {
 public:
     using default_metadata_t = cc::uint16;
     static auto constexpr task_size = td::system::l1_cacheline_size;
     static auto constexpr metadata_size = sizeof(default_metadata_t);
     static auto constexpr usable_buffer_size = task_size - metadata_size;
-    static_assert(sizeof(detail::FuncPtrWrapper) <= usable_buffer_size, "task is too small to hold func_ptr_wrapper");
+    static_assert(sizeof(detail::func_ptr_wrapper) <= usable_buffer_size, "task is too small to hold func_ptr_wrapper");
 
 private:
     union {
-        cc::uint64 mFirstQword = 0;
-        cc::byte mBuffer[task_size];
+        cc::uint64 _first_qword = 0;
+        cc::byte _buffer[task_size];
     };
 
 public:
     // == Constructors ==
 
-    explicit Task() = default;
+    explicit task() = default;
 
     // From a lambda of the form void(void)
     template <class T, std::enable_if_t<std::is_invocable_r_v<void, T>, int> = 0>
-    explicit Task(T&& l)
+    explicit task(T&& l)
     {
         lambda(std::forward<T>(l));
     }
 
     // From function pointer and userdata void*
-    explicit Task(detail::FuncPtrWrapper::func_ptr_t func_ptr, void* userdata = nullptr) { ptr(func_ptr, userdata); }
+    explicit task(detail::func_ptr_wrapper::func_ptr_t func_ptr, void* userdata = nullptr) { ptr(func_ptr, userdata); }
 
 public:
     // == Deferred initialization ==
@@ -94,59 +94,59 @@ public:
     template <class T, std::enable_if_t<std::is_invocable_r_v<void, T>, int> = 0>
     void lambda(T&& l)
     {
-        CC_ASSERT(!isValid() && "Re-initialized task");
-        static_assert(sizeof(detail::LambdaWrapper<T>) <= usable_buffer_size, "Lambda capture exceeds task buffer size");
-        new (static_cast<void*>(mBuffer)) detail::LambdaWrapper<T>(std::forward<T>(l));
+        CC_ASSERT(!is_valid() && "Re-initialized task");
+        static_assert(sizeof(detail::lambda_wrapper<T>) <= usable_buffer_size, "Lambda capture exceeds task buffer size");
+        new (cc::placement_new, static_cast<void*>(_buffer)) detail::lambda_wrapper<T>(std::forward<T>(l));
     }
 
     // From function pointer of the form void(void*) and userdata void*
-    void ptr(detail::FuncPtrWrapper::func_ptr_t func_ptr, void* userdata = nullptr)
+    void ptr(detail::func_ptr_wrapper::func_ptr_t func_ptr, void* userdata = nullptr)
     {
-        CC_ASSERT(!isValid() && "Re-initialized task");
-        new (static_cast<void*>(mBuffer)) detail::FuncPtrWrapper(func_ptr, userdata);
+        CC_ASSERT(!is_valid() && "Re-initialized task");
+        new (cc::placement_new, static_cast<void*>(_buffer)) detail::func_ptr_wrapper(func_ptr, userdata);
     }
 
 public:
     // Write metadata into the reserved block
     template <class T = default_metadata_t>
-    void setMetadata(T data)
+    void set_metadata(T data)
     {
         static_assert(sizeof(T) <= metadata_size, "Metadata too large");
-        *static_cast<T*>(static_cast<void*>(mBuffer + usable_buffer_size)) = data;
+        *static_cast<T*>(static_cast<void*>(_buffer + usable_buffer_size)) = data;
     }
 
     // Read metadata from the reserved block
     template <class T = default_metadata_t>
-    T getMetadata() const
+    T get_metadata() const
     {
         static_assert(sizeof(T) <= metadata_size, "Metadata too large");
-        return *static_cast<T const*>(static_cast<void const*>(mBuffer + usable_buffer_size));
+        return *static_cast<T const*>(static_cast<void const*>(_buffer + usable_buffer_size));
     }
 
     // Execute the contained task
     void execute()
     {
-        CC_ASSERT(isValid() && "Executed uninitialized task");
-        (*reinterpret_cast<detail::CallableWrapper*>(mBuffer)).call();
+        CC_ASSERT(is_valid() && "Executed uninitialized task");
+        (*reinterpret_cast<detail::callable_wrapper*>(_buffer)).call();
     }
 
     // Clean up the possibly stored lambda, invalidating the task
     void cleanup()
     {
-        CC_ASSERT(isValid() && "Cleaned up uninitialized task");
-        (*reinterpret_cast<detail::CallableWrapper*>(mBuffer)).~CallableWrapper();
+        CC_ASSERT(is_valid() && "Cleaned up uninitialized task");
+        (*reinterpret_cast<detail::callable_wrapper*>(_buffer)).~callable_wrapper();
         CC_ASSERT((invalidate(), true)); // Invalidation is only required for assert checks
     }
 
     // Execute the contained task and clean it up afterwards (invalidates task)
-    void executeAndCleanup()
+    void execute_and_cleanup()
     {
         execute();
         cleanup();
     }
 
 private:
-    bool isValid() const { return mFirstQword != 0; }
-    void invalidate() { mFirstQword = 0; }
+    bool is_valid() const { return _first_qword != 0; }
+    void invalidate() { _first_qword = 0; }
 };
 }

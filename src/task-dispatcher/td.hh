@@ -29,8 +29,8 @@ constexpr T min(T a, T b)
     return a < b ? a : b;
 }
 
-[[nodiscard]] inline container::Task* alloc_tasks(size_t num) { return new container::Task[num]; }
-inline void dealloc_tasks(container::Task* ptr) { delete[] ptr; }
+[[nodiscard]] inline container::task* alloc_tasks(size_t num) { return new container::task[num]; }
+inline void dealloc_tasks(container::task* ptr) { delete[] ptr; }
 }
 
 // ==========
@@ -116,7 +116,7 @@ void launch(scheduler_config config, F&& func)
     config.ceil_to_pow2();
     CC_ASSERT(config.is_valid() && "Scheduler configuration invalid");
     Scheduler scheduler(config);
-    container::Task mainTask;
+    container::task mainTask;
     mainTask.lambda(std::forward<F>(func));
     scheduler.start(mainTask);
 }
@@ -130,7 +130,7 @@ void launch(F&& func)
         return;
 
     Scheduler scheduler;
-    container::Task mainTask;
+    container::task mainTask;
     mainTask.lambda(std::forward<F>(func));
     scheduler.start(mainTask);
 }
@@ -139,8 +139,8 @@ void launch(F&& func)
 // Submit
 
 // Raw submit from constructed Task types
-void submit_raw(sync& sync, container::Task* tasks, unsigned num) { td::Scheduler::current().submitTasks(tasks, num, sync); }
-void submit_raw(sync& sync, cc::span<container::Task> tasks) { submit_raw(sync, tasks.data(), unsigned(tasks.size())); }
+void submit_raw(sync& sync, container::task* tasks, unsigned num) { td::Scheduler::current().submitTasks(tasks, num, sync); }
+void submit_raw(sync& sync, cc::span<container::task> tasks) { submit_raw(sync, tasks.data(), unsigned(tasks.size())); }
 
 // TODO Single pointer to member with arguments
 // template <class F, class FObj, class... Args>
@@ -149,7 +149,7 @@ void submit_raw(sync& sync, cc::span<container::Task> tasks) { submit_raw(sync, 
 //    using FuncT = decltype (inst.*fun);
 //    static_assert(std::is_invocable_v<FuncT, Args...>, "function must be invocable with the given args");
 //    static_assert(std::is_same_v<std::invoke_result_t<FuncT, Args...>, void>, "return must be void");
-//    container::Task dispatch([fun, args..., &inst] { (inst.*fun)(args...); });
+//    container::task dispatch([fun, args..., &inst] { (inst.*fun)(args...); });
 //    Scheduler::current().submitTasks(&dispatch, 1, s);
 //}
 
@@ -160,7 +160,7 @@ void submit(sync& sync, F&& func)
     static_assert(std::is_invocable_v<F>, "function must be invocable without arguments");
     static_assert(std::is_invocable_r_v<void, F>, "return must be void");
 
-    container::Task dispatch;
+    container::task dispatch;
     dispatch.lambda(std::forward<F>(func));
     submit_raw(sync, &dispatch, 1);
 }
@@ -172,7 +172,7 @@ void submit(sync& s, F&& fun, Args&&... args)
     static_assert(std::is_invocable_v<F, Args...>, "function must be invocable with the given args");
     static_assert(std::is_same_v<std::invoke_result_t<F, Args...>, void>, "return must be void");
     // A lambda callung fun(args...), but moving the args instead of copying them into the lambda
-    container::Task dispatch(
+    container::task dispatch(
         [fun, tup = std::make_tuple(std::move(args)...)] { std::apply([&fun](auto&&... args) { fun(decltype(args)(args)...); }, tup); });
     submit_raw(s, &dispatch, 1);
 }
@@ -184,7 +184,7 @@ void submit(sync& s, F func, FObj& inst, Args&&... args)
     static_assert(std::is_invocable_v<F, FObj, Args...>, "function must be invocable with the given args");
     static_assert(std::is_same_v<std::invoke_result_t<F, FObj, Args...>, void>, "return must be void");
     // A lambda calling fun(args...), but moving the args instead of copying them into the lambda
-    container::Task dispatch([func, inst_ptr = &inst, tup = std::make_tuple(std::move(args)...)] {
+    container::task dispatch([func, inst_ptr = &inst, tup = std::make_tuple(std::move(args)...)] {
         std::apply([&func, &inst_ptr](auto&&... args) { (inst_ptr->*func)(decltype(args)(args)...); }, tup);
     });
 
@@ -254,7 +254,7 @@ template <class F>
     if constexpr (std::is_same_v<R, void>)
     {
         sync res;
-        container::Task dispatch([=] { fun(); });
+        container::task dispatch([=] { fun(); });
         submit_raw(res, &dispatch, 1);
         return res;
     }
@@ -263,7 +263,7 @@ template <class F>
         sync s;
         future<R> res;
         R* const result_ptr = res.get_raw_pointer();
-        container::Task dispatch([=] { *result_ptr = fun(); });
+        container::task dispatch([=] { *result_ptr = fun(); });
         submit_raw(s, &dispatch, 1);
         res.set_sync(s);
         return res;
@@ -281,7 +281,7 @@ template <class F, class FObj, class... Args, std::enable_if_t<std::is_member_fu
         sync res;
 
         // A lambda calling fun(args...), but moving the args instead of copying them into the lambda
-        container::Task dispatch([func, inst_ptr = &inst, tup = std::make_tuple(std::move(args)...)] {
+        container::task dispatch([func, inst_ptr = &inst, tup = std::make_tuple(std::move(args)...)] {
             std::apply([&func, &inst_ptr](auto&&... args) { (inst_ptr->*func)(decltype(args)(args)...); }, tup);
         });
 
@@ -295,7 +295,7 @@ template <class F, class FObj, class... Args, std::enable_if_t<std::is_member_fu
         R* const result_ptr = res.get_raw_pointer();
 
         // A lambda calling fun(args...), but moving the args instead of copying them into the lambda
-        container::Task dispatch([func, inst_ptr = &inst, result_ptr, tup = std::make_tuple(std::move(args)...)] {
+        container::task dispatch([func, inst_ptr = &inst, result_ptr, tup = std::make_tuple(std::move(args)...)] {
             std::apply([&func, &inst_ptr, &result_ptr](auto&&... args) { *result_ptr = (inst_ptr->*func)(decltype(args)(args)...); }, tup);
         });
 
@@ -317,7 +317,7 @@ template <class F, class... Args, std::enable_if_t<std::is_invocable_v<F, Args..
         sync res;
 
         // A lambda callung fun(args...), but moving the args instead of copying them into the lambda
-        container::Task dispatch(
+        container::task dispatch(
             [fun, tup = std::make_tuple(std::move(args)...)] { std::apply([&fun](auto&&... args) { fun(decltype(args)(args)...); }, tup); });
 
         submit_raw(res, &dispatch, 1);
@@ -330,7 +330,7 @@ template <class F, class... Args, std::enable_if_t<std::is_invocable_v<F, Args..
         R* const result_ptr = res.get_raw_pointer();
 
         // A lambda callung fun(args...), but moving the args instead of copying them into the lambda
-        container::Task dispatch([fun, result_ptr, tup = std::make_tuple(std::move(args)...)] {
+        container::task dispatch([fun, result_ptr, tup = std::make_tuple(std::move(args)...)] {
             std::apply([&fun, &result_ptr](auto&&... args) { *result_ptr = fun(decltype(args)(args)...); }, tup);
         });
 
@@ -343,14 +343,14 @@ template <class F, class... Args, std::enable_if_t<std::is_invocable_v<F, Args..
 // ==========
 // Sync return variants
 
-[[nodiscard]] sync submit_raw(cc::span<container::Task> tasks)
+[[nodiscard]] sync submit_raw(cc::span<container::task> tasks)
 {
     td::sync res;
     submit_raw(res, tasks.data(), unsigned(tasks.size()));
     return res;
 }
 
-[[nodiscard]] sync submit_raw(container::Task* tasks, unsigned num)
+[[nodiscard]] sync submit_raw(container::task* tasks, unsigned num)
 {
     td::sync res;
     submit_raw(res, tasks, num);

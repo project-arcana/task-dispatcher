@@ -260,13 +260,13 @@ private:
     std::shared_ptr<Deque<T>> deque;
 
 public:
-    explicit Worker() : deque(nullptr) {} // invalid state default ctor
+    explicit Worker() = default; // invalid state default ctor
+
     // Deferred init setter
     void setDeque(std::shared_ptr<Deque<T>> d) { deque = std::move(d); }
 
     // Regular ctor
     explicit Worker(std::shared_ptr<Deque<T>> d) : deque(std::move(d)) {}
-
 
     // Copy constructor.
     // There can only be one worker end.
