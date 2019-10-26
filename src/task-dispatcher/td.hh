@@ -57,7 +57,8 @@ void wait_for_unpinned(STs&... syncs)
 
 [[nodiscard]] inline bool is_scheduler_alive() { return Scheduler::isInsideScheduler(); }
 
-// Future
+// Future, move only
+// Can be obtained when submitting invocables with return values
 template <class T>
 struct future
 {

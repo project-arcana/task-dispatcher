@@ -61,12 +61,12 @@ public:
     void wait(td::sync& sync, bool pinnned = false, int target = 0);
 
     // The scheduler running the current task
-    [[nodiscard]] static Scheduler& current() { return *s_current_scheduler; }
+    [[nodiscard]] static Scheduler& current() { return *sCurrentScheduler; }
     // Returns true if called from inside the scheduler
-    [[nodiscard]] static bool isInsideScheduler() { return s_current_scheduler != nullptr; }
+    [[nodiscard]] static bool isInsideScheduler() { return sCurrentScheduler != nullptr; }
 
 private:
-    static thread_local Scheduler* s_current_scheduler;
+    static thread_local Scheduler* sCurrentScheduler;
 
 public:
     using fiber_index_t = unsigned;

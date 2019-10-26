@@ -29,7 +29,7 @@ namespace
 auto constexpr s_use_workstealing = true;
 }
 
-thread_local td::Scheduler* td::Scheduler::s_current_scheduler = nullptr;
+thread_local td::Scheduler* td::Scheduler::sCurrentScheduler = nullptr;
 
 namespace td
 {
@@ -184,7 +184,7 @@ struct Scheduler::callback_funcs
 
         // Register thread local current scheduler variable
         Scheduler* const scheduler = worker_arg->owning_scheduler;
-        scheduler->s_current_scheduler = scheduler;
+        scheduler->sCurrentScheduler = scheduler;
 
         s_tls.reset();
         s_tls.thread_index = worker_arg->index;
@@ -602,7 +602,7 @@ void td::Scheduler::start(td::container::task main_task)
         native::set_current_thread_affinity(0);
 
         s_tls.reset();
-        s_current_scheduler = this;
+        sCurrentScheduler = this;
 
         // Create main fiber on this thread
         native::create_main_fiber(s_tls.thread_fiber);
@@ -720,8 +720,8 @@ void td::Scheduler::start(td::container::task main_task)
             // Reset counter handles
             mCounterHandles.reset();
 
-            // Clear s_current_scheduler
-            s_current_scheduler = nullptr;
+            // Clear sCurrentScheduler
+            sCurrentScheduler = nullptr;
         }
     }
 }
