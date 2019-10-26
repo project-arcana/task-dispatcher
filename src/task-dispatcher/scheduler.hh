@@ -51,6 +51,7 @@ public:
 
 public:
     explicit Scheduler(scheduler_config const& config = scheduler_config());
+    ~Scheduler();
 
     // Launch the scheduler with the given main task
     void start(container::task main_task);

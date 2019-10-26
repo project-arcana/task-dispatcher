@@ -513,6 +513,11 @@ td::Scheduler::Scheduler(scheduler_config const& config)
     static_assert(invalid_counter == std::numeric_limits<counter_index_t>().max(), "Invalid counter index corrupt");
 }
 
+td::Scheduler::~Scheduler()
+{
+    // Intentionally left empty
+}
+
 void td::Scheduler::submitTasks(td::container::task* tasks, unsigned num_tasks, td::sync& sync)
 {
     counter_index_t counter_index;
