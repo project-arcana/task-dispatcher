@@ -1,11 +1,11 @@
 #pragma once
 
-#include <memory>
 #include <tuple> // TODO: Replace with cc::tuple
 
 #include <clean-core/assert.hh>
 #include <clean-core/defer.hh>
 #include <clean-core/span.hh>
+#include <clean-core/unique_ptr.hh>
 
 #include "container/task.hh"
 #include "scheduler.hh"
@@ -57,49 +57,49 @@ void wait_for_unpinned(STs&... syncs)
 
 [[nodiscard]] inline bool is_scheduler_alive() { return Scheduler::isInsideScheduler(); }
 
-// Future - TODO: Rewrite
+// Future
 template <class T>
 struct future
 {
-private:
-    sync mSync;
-    std::shared_ptr<T> mValue;
-
 public:
+    future() : _value(cc::make_unique<T>()) {}
+    ~future()
+    {
+        // Enforce sync guarantee
+        if (_sync.initialized)
+            ::td::wait_for(_sync);
+    }
+
     [[nodiscard]] T const& get()
     {
-        ::td::wait_for(mSync);
-        return *mValue;
+        ::td::wait_for(_sync);
+        return *_value;
     }
 
     [[nodiscard]] T const& get_unpinned()
     {
-        ::td::wait_for_unpinned(mSync);
-        return *mValue;
+        ::td::wait_for_unpinned(_sync);
+        return *_value;
     }
 
-    [[nodiscard]] T* get_raw_pointer() const { return mValue.get(); }
+    [[nodiscard]] T* get_raw_pointer() const { return _value.get(); }
 
-    void set_sync(sync s) { mSync = s; }
-
-    future() : mValue(std::make_shared<T>()) {}
-    ~future()
-    {
-        // Enforce sync guarantee
-        if (mSync.initialized)
-            ::td::wait_for(mSync);
-    }
+    void set_sync(sync s) { _sync = s; }
 
     future(future&) = delete;
     future& operator=(future&) = delete;
 
-    future(future&& rhs) noexcept : mSync(rhs.mSync), mValue(std::move(rhs.mValue)) { rhs.mSync.initialized = false; }
+    future(future&& rhs) noexcept : _sync(rhs._sync), _value(std::move(rhs._value)) { rhs._sync.initialized = false; }
     future& operator=(future&& rhs) noexcept
     {
-        mSync = rhs.mSync;
-        mValue = std::move(rhs.mValue);
-        rhs.mSync.initialized = false;
+        _sync = rhs._sync;
+        _value = std::move(rhs._value);
+        rhs._sync.initialized = false;
     }
+
+private:
+    sync _sync;
+    cc::unique_ptr<T> _value;
 };
 
 // ==========
