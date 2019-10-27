@@ -4,7 +4,6 @@
 
 #include <clean-core/array.hh>
 #include <clean-core/assert.hh>
-#include <clean-core/defer.hh>
 #include <clean-core/span.hh>
 #include <clean-core/unique_ptr.hh>
 #include <clean-core/move.hh>
