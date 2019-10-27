@@ -2,19 +2,21 @@
 
 #include <cstdint>
 
+#include <clean-core/assert.hh>
+#include <clean-core/defer.hh>
 #include <clean-core/macros.hh>
 
 #ifdef _WIN32
 
 #include <atomic>
 
-#include <clean-core/native/win32_sanitized.hh>
 #include <process.h>
-
-#include <clean-core/assert.hh>
+#include <clean-core/native/win32_sanitized.hh>
 
 #else
 
+#include <errno.h>
+#include <limits.h>
 #include <pthread.h>
 #include <unistd.h>
 
@@ -69,25 +71,13 @@ inline bool create_thread(uint32_t stackSize, thread_start_func_t startRoutine, 
     return true;
 }
 
-inline void end_current_thread()
-{
-    ::_endthreadex(0);
-}
+inline void end_current_thread() { ::_endthreadex(0); }
 
-inline void join_thread(thread_t thread)
-{
-    ::WaitForSingleObject(thread.handle, INFINITE);
-}
+inline void join_thread(thread_t thread) { ::WaitForSingleObject(thread.handle, INFINITE); }
 
-inline thread_t get_current_thread()
-{
-    return thread_t{::GetCurrentThread(), ::GetCurrentThreadId()};
-}
+[[nodiscard]] inline thread_t get_current_thread() { return thread_t{::GetCurrentThread(), ::GetCurrentThreadId()}; }
 
-inline void set_current_thread_affinity(size_t coreAffinity)
-{
-    ::SetThreadAffinityMask(::GetCurrentThread(), 1ULL << coreAffinity);
-}
+inline void set_current_thread_affinity(size_t coreAffinity) { ::SetThreadAffinityMask(::GetCurrentThread(), 1ULL << coreAffinity); }
 
 inline void create_native_event(event_t* event)
 {
@@ -95,10 +85,7 @@ inline void create_native_event(event_t* event)
     event->count_waiters = 0;
 }
 
-inline void close_event(event_t eventId)
-{
-    ::CloseHandle(eventId.event);
-}
+inline void close_event(event_t eventId) { ::CloseHandle(eventId.event); }
 
 inline void wait_for_event(event_t& eventId, uint32_t milliseconds)
 {
@@ -116,15 +103,9 @@ inline void wait_for_event(event_t& eventId, uint32_t milliseconds)
     CC_ASSERT(retval != WAIT_FAILED && prev != 0 && "Failed to wait on native event");
 }
 
-inline void signal_event(event_t eventId)
-{
-    ::SetEvent(eventId.event);
-}
+inline void signal_event(event_t eventId) { ::SetEvent(eventId.event); }
 
-inline void thread_sleep(uint32_t milliseconds)
-{
-    ::Sleep(milliseconds);
-}
+inline void thread_sleep(uint32_t milliseconds) { ::Sleep(milliseconds); }
 #else
 struct thread_t
 {
@@ -136,7 +117,7 @@ struct event_t
     pthread_cond_t cond;
     pthread_mutex_t mutex;
 };
-constexpr static uint32_t EVENTWAIT_INFINITE = uint32_t(-1);
+constexpr static uint32_t event_wait_infinite = uint32_t(-1);
 
 using thread_start_func_t = void* (*)(void* arg);
 #define TD_NATIVE_THREAD_RETURN_TYPE void*
@@ -147,14 +128,11 @@ inline bool create_thread(uint32_t stackSize, thread_start_func_t startRoutine, 
 {
     pthread_attr_t threadAttr;
     pthread_attr_init(&threadAttr);
+    CC_DEFER { pthread_attr_destroy(&threadAttr); };
 
     // Set stack size
     pthread_attr_setstacksize(&threadAttr, stackSize);
-
     int success = pthread_create(&returnThread->native, &threadAttr, startRoutine, arg);
-
-    // Cleanup
-    pthread_attr_destroy(&threadAttr);
 
     return success == 0;
 }
@@ -163,11 +141,14 @@ inline bool create_thread(uint32_t stackSize, thread_start_func_t startRoutine, 
 {
     pthread_attr_t threadAttr;
     pthread_attr_init(&threadAttr);
+    CC_DEFER { pthread_attr_destroy(&threadAttr); };
 
     // Set stack size
-    pthread_attr_setstacksize(&threadAttr, stackSize);
+    CC_ASSERT(stackSize >= PTHREAD_STACK_MIN);
+    auto const setstack_res = pthread_attr_setstacksize(&threadAttr, stackSize);
+    CC_ASSERT(setstack_res == 0);
 
-// TODO: OSX and MinGW Thread Affinity
+    // TODO: OSX and MinGW Thread Affinity
 #if defined(CC_OS_LINUX)
     // Set core affinity
     cpu_set_t cpuSet;
@@ -178,28 +159,15 @@ inline bool create_thread(uint32_t stackSize, thread_start_func_t startRoutine, 
     (void)coreAffinity;
 #endif
 
-    int success = pthread_create(&returnThread->native, &threadAttr, startRoutine, arg);
-
-    // Cleanup
-    pthread_attr_destroy(&threadAttr);
-
-    return success == 0;
+    auto const create_res = pthread_create(&returnThread->native, &threadAttr, startRoutine, arg);
+    return create_res == 0;
 }
 
-[[noreturn]] inline void end_current_thread()
-{
-    pthread_exit(nullptr);
-}
+[[noreturn]] inline void end_current_thread() { pthread_exit(nullptr); }
 
-inline void join_thread(thread_t thread)
-{
-    pthread_join(thread.native, nullptr);
-}
+inline void join_thread(thread_t thread) { pthread_join(thread.native, nullptr); }
 
-inline thread_t get_current_thread()
-{
-    return {pthread_self()};
-}
+[[nodiscard]] inline thread_t get_current_thread() { return {pthread_self()}; }
 
 inline void set_current_thread_affinity(size_t coreAffinity)
 {
@@ -215,10 +183,7 @@ inline void set_current_thread_affinity(size_t coreAffinity)
 #endif
 }
 
-inline void create_native_event(event_t* event)
-{
-    *event = {PTHREAD_COND_INITIALIZER, PTHREAD_MUTEX_INITIALIZER};
-}
+inline void create_native_event(event_t* event) { *event = {PTHREAD_COND_INITIALIZER, PTHREAD_MUTEX_INITIALIZER}; }
 
 inline void close_event(event_t /*eventId*/)
 {
@@ -231,7 +196,7 @@ inline void wait_for_event(event_t& eventId, int64_t milliseconds)
 
     constexpr int64_t mills_in_sec = 1000;
 
-    if (milliseconds == EVENTWAIT_INFINITE)
+    if (milliseconds == event_wait_infinite)
     {
         pthread_cond_wait(&eventId.cond, &eventId.mutex);
     }
