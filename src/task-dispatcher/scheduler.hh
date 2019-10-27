@@ -2,6 +2,7 @@
 
 #include <atomic>
 
+#include <clean-core/array.hh>
 #include <clean-core/typedefs.hh>
 
 #include <task-dispatcher/common/system_info.hh>
@@ -50,22 +51,23 @@ public:
 
 public:
     explicit Scheduler(scheduler_config const& config = scheduler_config());
+    ~Scheduler();
 
     // Launch the scheduler with the given main task
-    void start(container::Task main_task);
+    void start(container::task main_task);
 
     // Enqueue the given tasks and associate them with a sync object
-    void submitTasks(container::Task* tasks, unsigned num_tasks, td::sync& sync);
+    void submitTasks(container::task* tasks, unsigned num_tasks, td::sync& sync);
     // Resume execution after the given sync object has reached a set target
     void wait(td::sync& sync, bool pinnned = false, int target = 0);
 
     // The scheduler running the current task
-    [[nodiscard]] static Scheduler& current() { return *s_current_scheduler; }
+    [[nodiscard]] static Scheduler& current() { return *sCurrentScheduler; }
     // Returns true if called from inside the scheduler
-    [[nodiscard]] static bool isInsideScheduler() { return s_current_scheduler != nullptr; }
+    [[nodiscard]] static bool isInsideScheduler() { return sCurrentScheduler != nullptr; }
 
 private:
-    static thread_local Scheduler* s_current_scheduler;
+    static thread_local Scheduler* sCurrentScheduler;
 
 public:
     using fiber_index_t = unsigned;
@@ -85,20 +87,12 @@ private:
     size_t const mFiberStackSize;
     std::atomic_bool mIsShuttingDown = {false};
 
-    // Threads
-    worker_thread_t* mThreads;
-    thread_index_t const mNumThreads;
-
-    // Fibers
-    worker_fiber_t* mFibers;
-    fiber_index_t const mNumFibers;
-
-    // Counters
-    atomic_counter_t* mCounters;
-    counter_index_t const mNumCounters;
+    cc::array<worker_thread_t> mThreads;
+    cc::array<worker_fiber_t> mFibers;
+    cc::array<atomic_counter_t> mCounters;
 
     // Queues
-    container::MPMCQueue<container::Task> mTasks;
+    container::MPMCQueue<container::task> mTasks;
     container::MPMCQueue<fiber_index_t> mIdleFibers;
     container::MPMCQueue<fiber_index_t> mResumableFibers;
     container::MPMCQueue<counter_index_t> mFreeCounters;
@@ -120,7 +114,7 @@ private:
     void yieldToFiber(fiber_index_t target_fiber, fiber_destination_e own_destination);
     void cleanUpPrevFiber();
 
-    bool getNextTask(container::Task& task);
+    bool getNextTask(container::task& task);
     bool tryResumeFiber(fiber_index_t fiber);
 
     bool counterAddWaitingFiber(atomic_counter_t& counter, fiber_index_t fiber_index, thread_index_t pinned_thread_index, int counter_target);
