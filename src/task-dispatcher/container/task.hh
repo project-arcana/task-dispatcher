@@ -56,7 +56,7 @@ private:
 //
 // NOTE: If initialized from a lambda, cleanup() must get called exactly once on any copy of that instance, before the last of them is
 // either destroyed or re-initialized. Zero calls could leak captured non-trivial-dtor types like std::vector, more than one call would read after
-// free. This restriction allows task to be almost POD, but makes usage of this struct outside of rigid scenarios inadvisable.
+// free. This restriction allows task to be POD, but makes usage of this struct outside of rigid scenarios inadvisable.
 struct task
 {
 public:
