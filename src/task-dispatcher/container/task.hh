@@ -21,7 +21,7 @@ struct callable_wrapper
 template <class T>
 struct lambda_wrapper final : callable_wrapper
 {
-    static_assert (std::is_invocable_r_v<void, T>, "Lambda must have no arguments");
+    static_assert(std::is_invocable_r_v<void, T>, "Lambda must have no arguments");
     explicit lambda_wrapper(T&& t) : _lambda(std::move(t)) {}
     void call() final override { _lambda(); }
 
@@ -68,14 +68,10 @@ public:
     static_assert(sizeof(detail::func_ptr_wrapper) <= usable_buffer_size, "task is too small to hold func_ptr_wrapper");
 
 private:
-    union {
-        cc::uint64 _first_qword = 0;
-        cc::byte _buffer[task_size];
-    };
+    cc::byte _buffer[task_size];
 
 public:
     // == Constructors ==
-
     explicit task() = default;
 
     // From a lambda of the form void(void)
@@ -95,7 +91,6 @@ public:
     template <class T, std::enable_if_t<std::is_invocable_r_v<void, T>, int> = 0>
     void lambda(T&& l)
     {
-        CC_ASSERT(!is_valid() && "Re-initialized task");
         static_assert(sizeof(detail::lambda_wrapper<T>) <= usable_buffer_size, "Lambda capture exceeds task buffer size");
         new (cc::placement_new, static_cast<void*>(_buffer)) detail::lambda_wrapper<T>(std::forward<T>(l));
     }
@@ -103,7 +98,6 @@ public:
     // From function pointer of the form void(void*) and userdata void*
     void ptr(detail::func_ptr_wrapper::func_ptr_t func_ptr, void* userdata = nullptr)
     {
-        CC_ASSERT(!is_valid() && "Re-initialized task");
         new (cc::placement_new, static_cast<void*>(_buffer)) detail::func_ptr_wrapper(func_ptr, userdata);
     }
 
@@ -125,19 +119,10 @@ public:
     }
 
     // Execute the contained task
-    void execute()
-    {
-        CC_ASSERT(is_valid() && "Executed uninitialized task");
-        (*reinterpret_cast<detail::callable_wrapper*>(_buffer)).call();
-    }
+    void execute() { (*reinterpret_cast<detail::callable_wrapper*>(_buffer)).call(); }
 
     // Clean up the possibly stored lambda, invalidating the task
-    void cleanup()
-    {
-        CC_ASSERT(is_valid() && "Cleaned up uninitialized task");
-        (*reinterpret_cast<detail::callable_wrapper*>(_buffer)).~callable_wrapper();
-        CC_ASSERT((invalidate(), true)); // Invalidation is only required for assert checks
-    }
+    void cleanup() { (*reinterpret_cast<detail::callable_wrapper*>(_buffer)).~callable_wrapper(); }
 
     // Execute the contained task and clean it up afterwards (invalidates task)
     void execute_and_cleanup()
@@ -145,9 +130,5 @@ public:
         execute();
         cleanup();
     }
-
-private:
-    bool is_valid() const { return _first_qword != 0; }
-    void invalidate() { _first_qword = 0; }
 };
 }
