@@ -18,9 +18,10 @@ struct callable_wrapper
     virtual void call() = 0;
 };
 
-template <class T, std::enable_if_t<std::is_invocable_r_v<void, T>, int> = 0>
+template <class T>
 struct lambda_wrapper final : callable_wrapper
 {
+    static_assert (std::is_invocable_r_v<void, T>, "Lambda must have no arguments");
     explicit lambda_wrapper(T&& t) : _lambda(std::move(t)) {}
     void call() final override { _lambda(); }
 
