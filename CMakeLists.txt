@@ -27,7 +27,7 @@ if(NOT CMAKE_BUILD_TYPE)
 endif()
 
 if (MSVC)
-    target_compile_options(task-dispatcher PUBLIC /MP)
+    target_compile_options(task-dispatcher PUBLIC /MP /GT)
 else()
     # Pthread
     set(THREADS_PREFER_PTHREAD_FLAG ON)
