@@ -4,10 +4,10 @@
 
 #include <clean-core/array.hh>
 #include <clean-core/assert.hh>
+#include <clean-core/forward.hh>
+#include <clean-core/move.hh>
 #include <clean-core/span.hh>
 #include <clean-core/unique_ptr.hh>
-#include <clean-core/move.hh>
-#include <clean-core/forward.hh>
 
 #include "container/task.hh"
 #include "scheduler.hh"
@@ -206,7 +206,7 @@ void submit_n(sync& sync, F&& func, unsigned n)
 
 // Lambda called for each element with element reference
 template <class T, class F>
-void submit_each(sync& sync, F&& func, cc::span<T> vals)
+void submit_each_ref(sync& sync, F&& func, cc::span<T> vals)
 {
     static_assert(std::is_invocable_v<F, T&>, "function must be invocable with element reference");
     static_assert(std::is_same_v<std::invoke_result_t<F, T&>, void>, "return must be void");
@@ -214,6 +214,20 @@ void submit_each(sync& sync, F&& func, cc::span<T> vals)
     auto tasks = cc::array<td::container::task>::uninitialized(vals.size());
     for (auto i = 0u; i < vals.size(); ++i)
         tasks[i].lambda([func, val_ptr = vals.data() + i] { func(*val_ptr); });
+
+    submit_raw(sync, tasks.data(), unsigned(vals.size()));
+}
+
+// Lambda called for each element with element copy
+template <class T, class F>
+void submit_each_copy(sync& sync, F&& func, cc::span<T> vals)
+{
+    static_assert(std::is_invocable_v<F, T>, "function must be invocable with element copy");
+    static_assert(std::is_same_v<std::invoke_result_t<F, T>, void>, "return must be void");
+
+    auto tasks = cc::array<td::container::task>::uninitialized(vals.size());
+    for (auto i = 0u; i < vals.size(); ++i)
+        tasks[i].lambda([func, val_copy = vals[i]] { func(val_copy); });
 
     submit_raw(sync, tasks.data(), unsigned(vals.size()));
 }
@@ -363,12 +377,22 @@ template <class F>
 }
 
 template <class T, class F>
-[[nodiscard]] sync submit_each(F&& func, cc::span<T> vals)
+[[nodiscard]] sync submit_each_ref(F&& func, cc::span<T> vals)
 {
     static_assert(std::is_invocable_v<F, T&>, "function must be invocable with element reference");
     static_assert(std::is_same_v<std::invoke_result_t<F, T&>, void>, "return must be void");
     sync res;
-    submit_each<T, F>(res, cc::forward<F>(func), vals);
+    submit_each_ref<T, F>(res, cc::forward<F>(func), vals);
+    return res;
+}
+
+template <class T, class F>
+[[nodiscard]] sync submit_each_copy(F&& func, cc::span<T> vals)
+{
+    static_assert(std::is_invocable_v<F, T>, "function must be invocable with element value");
+    static_assert(std::is_same_v<std::invoke_result_t<F, T>, void>, "return must be void");
+    sync res;
+    submit_each_copy<T, F>(res, cc::forward<F>(func), vals);
     return res;
 }
 
