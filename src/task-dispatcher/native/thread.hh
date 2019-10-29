@@ -157,7 +157,6 @@ inline bool set_stack_size(pthread_attr_t& thread_attributes, size_t stack_size)
     if (setstack_res != 0)
     {
         // on some systems, stack size must be a multiple of the system page size, retry
-        auto const rounded_stack_size = detail::round_to_page_size(stack_size);
         auto const setstack_res_retry = pthread_attr_setstacksize(&thread_attributes, detail::round_to_page_size(stack_size));
 
         if (setstack_res_retry != 0)
