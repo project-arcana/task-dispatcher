@@ -170,14 +170,14 @@ inline bool set_stack_size(pthread_attr_t& thread_attributes, size_t stack_size)
 
 inline bool create_thread(size_t stack_size, thread_start_func_t start_routine, void* arg, thread_t* return_thread)
 {
-    pthread_attr_t threadAttr;
-    pthread_attr_init(&threadAttr);
-    CC_DEFER { pthread_attr_destroy(&threadAttr); };
+    pthread_attr_t thread_attr;
+    pthread_attr_init(&thread_attr);
+    CC_DEFER { pthread_attr_destroy(&thread_attr); };
 
-    if (!detail::set_stack_size(threadAttr, stack_size))
+    if (!detail::set_stack_size(thread_attr, stack_size))
         return false;
 
-    auto const create_res = pthread_create(&return_thread->native, &threadAttr, start_routine, arg);
+    auto const create_res = pthread_create(&return_thread->native, &thread_attr, start_routine, arg);
     return create_res == 0;
 }
 
