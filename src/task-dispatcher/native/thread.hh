@@ -183,8 +183,6 @@ inline bool create_thread(size_t stack_size, thread_start_func_t start_routine, 
 
 inline bool create_thread(size_t stack_size, thread_start_func_t start_routine, void* arg, size_t core_affinity, thread_t* return_thread)
 {
-    CC_ASSERT(stack_size >= PTHREAD_STACK_MIN);
-
     pthread_attr_t thread_attr;
     pthread_attr_init(&thread_attr);
     CC_DEFER { pthread_attr_destroy(&thread_attr); };
