@@ -1,6 +1,6 @@
 #pragma once
 
-#include <limits>
+#include <cstddef>
 
 #include <clean-core/assert.hh>
 
@@ -10,8 +10,8 @@ namespace td::container
 template <class T, size_t N>
 class FIFOQueue
 {
-    static_assert (N > 0);
-    static_assert(N < size_t(std::numeric_limits<int>::max()), "FIFOQueue too large");
+    static_assert(N > 0);
+    static_assert(N < size_t(-1), "FIFOQueue too large");
 
 private:
     int mHead = -1;
