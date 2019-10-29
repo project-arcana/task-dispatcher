@@ -139,8 +139,8 @@ void launch(F&& func)
 // Submit
 
 // Raw submit from constructed Task types
-void submit_raw(sync& sync, container::task* tasks, unsigned num) { td::Scheduler::current().submitTasks(tasks, num, sync); }
-void submit_raw(sync& sync, cc::span<container::task> tasks) { submit_raw(sync, tasks.data(), unsigned(tasks.size())); }
+inline void submit_raw(sync& sync, container::task* tasks, unsigned num) { td::Scheduler::current().submitTasks(tasks, num, sync); }
+inline void submit_raw(sync& sync, cc::span<container::task> tasks) { submit_raw(sync, tasks.data(), unsigned(tasks.size())); }
 
 // TODO Single pointer to member with arguments
 // template <class F, class FObj, class... Args>
@@ -352,14 +352,14 @@ template <class F, class... Args, std::enable_if_t<std::is_invocable_v<F, Args..
 // ==========
 // Sync return variants
 
-[[nodiscard]] sync submit_raw(cc::span<container::task> tasks)
+[[nodiscard]] inline sync submit_raw(cc::span<container::task> tasks)
 {
     td::sync res;
     submit_raw(res, tasks.data(), unsigned(tasks.size()));
     return res;
 }
 
-[[nodiscard]] sync submit_raw(container::task* tasks, unsigned num)
+[[nodiscard]] inline sync submit_raw(container::task* tasks, unsigned num)
 {
     td::sync res;
     submit_raw(res, tasks, num);
