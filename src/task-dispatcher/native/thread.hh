@@ -192,10 +192,10 @@ inline bool create_thread(size_t stack_size, thread_start_func_t start_routine, 
 
 #if defined(CC_OS_LINUX)
     // Set core affinity
-    cpu_set_t cpuSet;
-    CPU_ZERO(&cpuSet);
-    CPU_SET(core_affinity, &cpuSet);
-    auto const setaffinity_res = pthread_attr_setaffinity_np(&thread_attr, sizeof(cpu_set_t), &cpuSet);
+    cpu_set_t cpu_set;
+    CPU_ZERO(&cpu_set);
+    CPU_SET(core_affinity, &cpu_set);
+    auto const setaffinity_res = pthread_attr_setaffinity_np(&thread_attr, sizeof(cpu_set_t), &cpu_set);
     if (setaffinity_res != 0)
         return false;
 #else
