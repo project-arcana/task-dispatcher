@@ -1,7 +1,6 @@
 #include "scheduler.hh"
 
 #include <limits> // Only for sanity check static_asserts
-#include <mutex>  // std::lock_guard
 
 #include <clean-core/allocate.hh>
 #include <clean-core/assert.hh>
@@ -325,7 +324,7 @@ bool td::Scheduler::getNextTask(td::container::task& task)
         fiber_index_t resumable_fiber_index;
         bool got_resumable;
         {
-            std::lock_guard lg(local_thread.pinned_resumable_fibers_lock);
+            LockGuard lg(local_thread.pinned_resumable_fibers_lock);
             got_resumable = local_thread.pinned_resumable_fibers.dequeue(resumable_fiber_index);
         }
 
@@ -338,7 +337,7 @@ bool td::Scheduler::getNextTask(td::container::task& task)
             else
             {
                 // Received fiber is not cleaned up yet, re-enqueue
-                std::lock_guard lg(local_thread.pinned_resumable_fibers_lock);
+                LockGuard lg(local_thread.pinned_resumable_fibers_lock);
                 local_thread.pinned_resumable_fibers.enqueue(resumable_fiber_index);
             }
             // TODO: Restart or fallthrough?
@@ -478,7 +477,7 @@ void td::Scheduler::counterCheckWaitingFibers(td::Scheduler::atomic_counter_t& c
                 // The waiting fiber is pinned to a certain thread, store it there
                 auto& pinned_thread = mThreads[slot.pinned_thread_index];
 
-                std::lock_guard lg(pinned_thread.pinned_resumable_fibers_lock);
+                LockGuard lg(pinned_thread.pinned_resumable_fibers_lock);
                 pinned_thread.pinned_resumable_fibers.enqueue(slot.fiber_index);
             }
 
