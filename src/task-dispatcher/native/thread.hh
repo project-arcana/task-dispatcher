@@ -124,42 +124,86 @@ using thread_start_func_t = void* (*)(void* arg);
 #define TD_NATIVE_THREAD_FUNC_DECL TD_NATIVE_THREAD_RETURN_TYPE
 #define TD_NATIVE_THREAD_FUNC_END return nullptr
 
-inline bool create_thread(uint32_t stackSize, thread_start_func_t startRoutine, void* arg, thread_t* returnThread)
+namespace detail
 {
-    pthread_attr_t threadAttr;
-    pthread_attr_init(&threadAttr);
-    CC_DEFER { pthread_attr_destroy(&threadAttr); };
-
-    // Set stack size
-    pthread_attr_setstacksize(&threadAttr, stackSize);
-    int success = pthread_create(&returnThread->native, &threadAttr, startRoutine, arg);
-
-    return success == 0;
+[[nodiscard]] inline size_t get_page_size()
+{
+    auto res = sysconf(_SC_PAGE_SIZE);
+    CC_ASSERT(res > 0 && "Error retrieving page size");
+    return size_t(res);
 }
 
-inline bool create_thread(uint32_t stackSize, thread_start_func_t startRoutine, void* arg, size_t coreAffinity, thread_t* returnThread)
+[[nodiscard]] inline size_t round_to_page_size(size_t stack_size)
+{
+    auto const page_size = get_page_size();
+
+    auto const remainder = stack_size % page_size;
+    if (remainder == 0)
+        return stack_size;
+    else
+        return stack_size + page_size - remainder;
+}
+
+inline bool set_stack_size(pthread_attr_t& thread_attributes, size_t stack_size)
+{
+    size_t default_stack_size = size_t(-1);
+    pthread_attr_getstacksize(&thread_attributes, &default_stack_size);
+    CC_ASSERT(default_stack_size >= PTHREAD_STACK_MIN);
+
+    // ceil the stack size to the default stack size, otherwise pthread_create can fail with EINVAL (undocumented)
+    stack_size = stack_size < default_stack_size ? default_stack_size : stack_size;
+
+    auto const setstack_res = pthread_attr_setstacksize(&thread_attributes, stack_size);
+    if (setstack_res != 0)
+    {
+        // on some systems, stack size must be a multiple of the system page size, retry
+        auto const setstack_res_retry = pthread_attr_setstacksize(&thread_attributes, detail::round_to_page_size(stack_size));
+
+        if (setstack_res_retry != 0)
+            // Retry failed
+            return false;
+    }
+
+    return true;
+}
+}
+
+inline bool create_thread(size_t stack_size, thread_start_func_t start_routine, void* arg, thread_t* return_thread)
 {
     pthread_attr_t threadAttr;
     pthread_attr_init(&threadAttr);
     CC_DEFER { pthread_attr_destroy(&threadAttr); };
 
-    // Set stack size
-    CC_ASSERT(stackSize >= PTHREAD_STACK_MIN);
-    auto const setstack_res = pthread_attr_setstacksize(&threadAttr, stackSize);
-    CC_ASSERT(setstack_res == 0);
+    if (!detail::set_stack_size(threadAttr, stack_size))
+        return false;
 
-    // TODO: OSX and MinGW Thread Affinity
+    auto const create_res = pthread_create(&return_thread->native, &threadAttr, start_routine, arg);
+    return create_res == 0;
+}
+
+inline bool create_thread(size_t stack_size, thread_start_func_t start_routine, void* arg, size_t core_affinity, thread_t* return_thread)
+{
+    pthread_attr_t thread_attr;
+    pthread_attr_init(&thread_attr);
+    CC_DEFER { pthread_attr_destroy(&thread_attr); };
+
+    if (!detail::set_stack_size(thread_attr, stack_size))
+        return false;
+
 #if defined(CC_OS_LINUX)
     // Set core affinity
-    cpu_set_t cpuSet;
-    CPU_ZERO(&cpuSet);
-    CPU_SET(coreAffinity, &cpuSet);
-    pthread_attr_setaffinity_np(&threadAttr, sizeof(cpu_set_t), &cpuSet);
+    cpu_set_t cpu_set;
+    CPU_ZERO(&cpu_set);
+    CPU_SET(core_affinity, &cpu_set);
+    auto const setaffinity_res = pthread_attr_setaffinity_np(&thread_attr, sizeof(cpu_set_t), &cpu_set);
+    if (setaffinity_res != 0)
+        return false;
 #else
+    // TODO: OSX and MinGW Thread Affinity
     (void)coreAffinity;
 #endif
 
-    auto const create_res = pthread_create(&returnThread->native, &threadAttr, startRoutine, arg);
+    auto const create_res = pthread_create(&return_thread->native, &thread_attr, start_routine, arg);
     return create_res == 0;
 }
 
