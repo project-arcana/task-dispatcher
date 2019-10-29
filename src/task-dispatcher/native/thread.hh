@@ -43,29 +43,31 @@ using thread_start_func_t = uint32_t(__stdcall*)(void* arg);
 #define TD_NATIVE_THREAD_FUNC_DECL TD_NATIVE_THREAD_RETURN_TYPE __stdcall
 #define TD_NATIVE_THREAD_FUNC_END return 0
 
-inline bool create_thread(uint32_t stackSize, thread_start_func_t startRoutine, void* arg, thread_t* returnThread)
+inline bool create_thread(size_t stack_size, thread_start_func_t start_routine, void* arg, thread_t* return_thread)
 {
-    auto const handle = reinterpret_cast<::HANDLE>(::_beginthreadex(nullptr, stackSize, startRoutine, arg, 0U, nullptr));
-    returnThread->handle = handle;
-    returnThread->id = ::GetThreadId(handle);
+    CC_ASSERT(stack_size <= unsigned(-1));
+    auto const handle = reinterpret_cast<::HANDLE>(::_beginthreadex(nullptr, unsigned(stack_size), start_routine, arg, 0U, nullptr));
+    return_thread->handle = handle;
+    return_thread->id = ::GetThreadId(handle);
 
     return handle != nullptr;
 }
 
-inline bool create_thread(uint32_t stackSize, thread_start_func_t startRoutine, void* arg, size_t coreAffinity, thread_t* returnThread)
+inline bool create_thread(size_t stack_size, thread_start_func_t start_routine, void* arg, size_t core_affinity, thread_t* return_thread)
 {
-    auto const handle = reinterpret_cast<::HANDLE>(::_beginthreadex(nullptr, stackSize, startRoutine, arg, CREATE_SUSPENDED, nullptr));
+    CC_ASSERT(stack_size <= unsigned(-1));
+    auto const handle = reinterpret_cast<::HANDLE>(::_beginthreadex(nullptr, unsigned(stack_size), start_routine, arg, CREATE_SUSPENDED, nullptr));
 
     if (handle == nullptr)
     {
         return false;
     }
 
-    ::DWORD_PTR const mask = 1ULL << coreAffinity;
+    ::DWORD_PTR const mask = 1ULL << core_affinity;
     ::SetThreadAffinityMask(handle, mask);
 
-    returnThread->handle = handle;
-    returnThread->id = ::GetThreadId(handle);
+    return_thread->handle = handle;
+    return_thread->id = ::GetThreadId(handle);
     ::ResumeThread(handle);
 
     return true;

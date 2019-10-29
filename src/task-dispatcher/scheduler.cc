@@ -658,8 +658,7 @@ void td::Scheduler::start(td::container::task main_task)
             // Prepare worker arg
             callback_funcs::worker_arg_t* const worker_arg = cc::alloc<callback_funcs::worker_arg_t>(callback_funcs::worker_arg_t{i, this, thread_deques});
 
-            auto success = native::create_thread(unsigned(mFiberStackSize) + thread_stack_overhead_safety, callback_funcs::worker_func, worker_arg, i,
-                                                 &thread.native);
+            auto success = native::create_thread(mFiberStackSize + thread_stack_overhead_safety, callback_funcs::worker_func, worker_arg, i, &thread.native);
             CC_ASSERT(success && "Failed to create worker thread");
         }
     }
