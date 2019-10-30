@@ -6,7 +6,7 @@
 #include <clean-core/defer.hh>
 #include <clean-core/macros.hh>
 
-#ifdef _WIN32
+#ifdef CC_OS_WINDOWS
 
 #include <atomic>
 
