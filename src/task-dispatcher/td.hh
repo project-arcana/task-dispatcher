@@ -41,12 +41,16 @@ inline void wait_for_unpinned(sync& sync) { Scheduler::current().wait(sync, fals
 template <class... STs>
 void wait_for(STs&... syncs)
 {
+    using firstST = typename std::tuple_element<0, std::tuple<STs...>>::type;
+    static_assert(std::is_same_v<firstST, sync>, "td::wait_for: wrong argument type - check if the sync objects are not const");
     (wait_for(syncs), ...);
 }
 
 template <class... STs>
 void wait_for_unpinned(STs&... syncs)
 {
+    using firstST = typename std::tuple_element<0, std::tuple<STs...>>::type;
+    static_assert(std::is_same_v<firstST, sync>, "td::wait_for_unpinned: wrong argument type - check if the sync objects are not const");
     (wait_for_unpinned(syncs), ...);
 }
 
@@ -234,19 +238,42 @@ void submit_each_copy(sync& sync, F&& func, cc::span<T> vals)
 
 // Lambda called for each batch, with batch start and end
 template <class F>
-void submit_batched(sync& sync, F&& func, unsigned n, unsigned num_batches_target = td::system::hardware_concurrency * 4)
+void submit_batched(sync& sync, F&& func, unsigned n, unsigned num_batches_max = td::system::hardware_concurrency * 4)
 {
     static_assert(std::is_invocable_v<F, unsigned, unsigned>, "function must be invocable with batch start and end argument");
     static_assert(std::is_same_v<std::invoke_result_t<F, unsigned, unsigned>, void>, "return must be void");
 
-    auto batch_size = detail::int_div_ceil(n, num_batches_target);
+    auto batch_size = detail::int_div_ceil(n, num_batches_max);
     auto num_batches = detail::int_div_ceil(n, batch_size);
+
+    CC_RUNTIME_ASSERT(num_batches <= num_batches_max && "programmer error");
 
     auto tasks = cc::array<td::container::task>::uninitialized(num_batches);
 
     for (auto batch = 0u, batchStart = 0u, batchEnd = detail::min(batch_size, n); batch < num_batches;
          ++batch, batchStart = batch * batch_size, batchEnd = detail::min((batch + 1) * batch_size, n))
         tasks[batch].lambda([=] { func(batchStart, batchEnd); });
+
+    submit_raw(sync, tasks.data(), num_batches);
+}
+
+// Lambda called for each batch, with batch start, end, and batch index
+template <class F>
+void submit_batched_n(sync& sync, F&& func, unsigned n, unsigned num_batches_max = td::system::hardware_concurrency * 4)
+{
+    static_assert(std::is_invocable_v<F, unsigned, unsigned, unsigned>, "function must be invocable with batch start, end, and index argument");
+    static_assert(std::is_same_v<std::invoke_result_t<F, unsigned, unsigned, unsigned>, void>, "return must be void");
+
+    auto batch_size = detail::int_div_ceil(n, num_batches_max);
+    auto num_batches = detail::int_div_ceil(n, batch_size);
+
+    CC_RUNTIME_ASSERT(num_batches <= num_batches_max && "programmer error");
+
+    auto tasks = cc::array<td::container::task>::uninitialized(num_batches);
+
+    for (auto batch = 0u, batchStart = 0u, batchEnd = detail::min(batch_size, n); batch < num_batches;
+         ++batch, batchStart = batch * batch_size, batchEnd = detail::min((batch + 1) * batch_size, n))
+        tasks[batch].lambda([=] { func(batchStart, batchEnd, batch); });
 
     submit_raw(sync, tasks.data(), num_batches);
 }
@@ -397,12 +424,22 @@ template <class T, class F>
 }
 
 template <class F>
-[[nodiscard]] sync submit_batched(F&& func, unsigned n, unsigned num_batches_target = td::system::hardware_concurrency * 4)
+[[nodiscard]] sync submit_batched(F&& func, unsigned n, unsigned num_batches_max = td::system::hardware_concurrency * 4)
 {
     static_assert(std::is_invocable_v<F, unsigned, unsigned>, "function must be invocable with batch start and end argument");
     static_assert(std::is_same_v<std::invoke_result_t<F, unsigned, unsigned>, void>, "return must be void");
     sync res;
-    submit_batched<F>(res, cc::forward<F>(func), n, num_batches_target);
+    submit_batched<F>(res, cc::forward<F>(func), n, num_batches_max);
+    return res;
+}
+
+template <class F>
+[[nodiscard]] sync submit_batched_n(F&& func, unsigned n, unsigned num_batches_max = td::system::hardware_concurrency * 4)
+{
+    static_assert(std::is_invocable_v<F, unsigned, unsigned, unsigned>, "function must be invocable with batch start, end, and index argument");
+    static_assert(std::is_same_v<std::invoke_result_t<F, unsigned, unsigned, unsigned>, void>, "return must be void");
+    sync res;
+    submit_batched_n<F>(res, cc::forward<F>(func), n, num_batches_max);
     return res;
 }
 }
