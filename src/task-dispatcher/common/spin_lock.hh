@@ -33,4 +33,20 @@ public:
     SpinLock& operator=(SpinLock const& other) = delete;
     SpinLock& operator=(SpinLock&& other) noexcept = delete;
 };
+
+template <typename T>
+class LockGuard
+{
+public:
+    explicit LockGuard(T& mutex) : mMutex(mutex) { mMutex.lock(); }
+    ~LockGuard() { mMutex.unlock(); }
+
+    LockGuard(const LockGuard&) = delete;
+    LockGuard(LockGuard&& other) noexcept = delete;
+    LockGuard& operator=(const LockGuard&) = delete;
+    LockGuard& operator=(LockGuard&& other) noexcept = delete;
+
+private:
+    T& mMutex;
+};
 }
