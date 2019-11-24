@@ -3,52 +3,28 @@
 #include <cstdint>
 
 #ifdef _MSC_VER
-#include <clean-core/native/win32_sanitized.hh>
+#include <intrin.h>
+#else
+#include <x86intrin.h>
 #endif
 
 namespace td::intrin
 {
-inline uint32_t bsr(uint32_t v)
+inline unsigned long bsr(uint32_t v) noexcept
 {
-#ifdef _MSC_VER
-    DWORD index;
+    unsigned long index;
     _BitScanReverse(&index, v);
     return index;
-#elif defined __GNUC__
-    return sizeof(v) * 8 - __builtin_clz(v);
-#endif
 }
 
-inline uint32_t bsr(uint64_t v)
+inline unsigned long bsr(uint64_t v) noexcept
 {
-#ifdef _MSC_VER
-    DWORD index;
+    unsigned long index;
     _BitScanReverse64(&index, v);
     return index;
-#elif defined __GNUC__
-    return sizeof(v) * 8 - __builtin_clzll(v);
-#endif
 }
 
-inline uint32_t cas(volatile uint32_t* dst, uint32_t cmp, uint32_t exc)
-{
-#ifdef _MSC_VER
-    return _InterlockedCompareExchange(dst, exc, cmp);
-#elif defined __GNUC__
-    return __sync_val_compare_and_swap(dst, cmp, exc);
-#endif
-}
-
-inline uint64_t rdtsc()
-{
-#ifdef _MSC_VER
-    return __rdtsc();
-#elif defined __GNUC__
-    unsigned int lo, hi;
-    __asm__ __volatile__("rdtsc" : "=a"(lo), "=d"(hi));
-    return (static_cast<uint64_t>(hi) << 32) | lo;
-#endif
-}
+inline unsigned long long rdtsc() noexcept { return __rdtsc(); }
 }
 
 namespace td::math

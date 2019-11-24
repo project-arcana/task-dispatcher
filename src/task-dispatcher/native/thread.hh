@@ -11,6 +11,7 @@
 #include <atomic>
 
 #include <process.h>
+
 #include <clean-core/native/win32_sanitized.hh>
 
 #else
