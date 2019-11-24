@@ -25,7 +25,7 @@ namespace
 // If false:
 //  use a single, fixed size MPMC queue
 //      in Scheduler::mTasks
-auto constexpr s_use_workstealing = true;
+auto constexpr s_use_workstealing = false;
 }
 
 thread_local td::Scheduler* td::Scheduler::sCurrentScheduler = nullptr;

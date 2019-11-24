@@ -39,16 +39,7 @@ inline uint32_t cas(volatile uint32_t* dst, uint32_t cmp, uint32_t exc)
 #endif
 }
 
-inline uint64_t rdtsc()
-{
-#ifdef _MSC_VER
-    return __rdtsc();
-#elif defined __GNUC__
-    unsigned int lo, hi;
-    __asm__ __volatile__("rdtsc" : "=a"(lo), "=d"(hi));
-    return (static_cast<uint64_t>(hi) << 32) | lo;
-#endif
-}
+inline uint64_t rdtsc() { return __rdtsc(); }
 }
 
 namespace td::math
