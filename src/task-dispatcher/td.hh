@@ -169,7 +169,10 @@ void submit(sync& sync, F&& func)
     static_assert(std::is_invocable_r_v<void, F>, "return must be void");
 
     container::task dispatch;
-    dispatch.lambda(cc::forward<F>(func));
+    if constexpr (std::is_class_v<F>)
+        dispatch.lambda(cc::forward<F>(func));
+    else
+        dispatch.lambda([=] { func(); });
     submit_raw(sync, &dispatch, 1);
 }
 
