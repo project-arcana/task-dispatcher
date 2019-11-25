@@ -4,6 +4,7 @@
 
 #include <clean-core/array.hh>
 #include <clean-core/assert.hh>
+#include <clean-core/enable_if.hh>
 #include <clean-core/forward.hh>
 #include <clean-core/move.hh>
 #include <clean-core/span.hh>
@@ -132,15 +133,15 @@ void launch(scheduler_config config, F&& func)
 template <class F>
 void launch(F&& func)
 {
-    static_assert(std::is_invocable_v<F>, "function must be invocable without arguments");
-    static_assert(std::is_same_v<std::invoke_result_t<F>, void>, "return must be void");
-    if (is_scheduler_alive())
-        return;
+    return launch(scheduler_config{}, cc::forward<F>(func));
+}
 
-    Scheduler scheduler;
-    container::task mainTask;
-    mainTask.lambda(cc::forward<F>(func));
-    scheduler.start(mainTask);
+template <class F>
+void launch_singlethreaded(F&& func)
+{
+    scheduler_config config;
+    config.num_threads = 1;
+    return launch(config, cc::forward<F>(func));
 }
 
 // ==========
@@ -162,7 +163,7 @@ inline void submit_raw(sync& sync, cc::span<container::task> tasks) { submit_raw
 //}
 
 // Single lambda
-template <class F, std::enable_if_t<std::is_invocable_r_v<void, F>, int> = 0>
+template <class F, cc::enable_if<std::is_invocable_r_v<void, F>> = true>
 void submit(sync& sync, F&& func)
 {
     static_assert(std::is_invocable_v<F>, "function must be invocable without arguments");
@@ -189,7 +190,7 @@ void submit(sync& s, F&& fun, Args&&... args)
 }
 
 // Pointer to member function with arguments - sync return variant, with optional return type
-template <class F, class FObj, class... Args, std::enable_if_t<std::is_member_function_pointer_v<F>, int> = 0>
+template <class F, class FObj, class... Args, cc::enable_if<std::is_member_function_pointer_v<F>> = true>
 void submit(sync& s, F func, FObj& inst, Args&&... args)
 {
     static_assert(std::is_invocable_v<F, FObj, Args...>, "function must be invocable with the given args");
@@ -314,7 +315,7 @@ template <class F>
 }
 
 // Pointer to member function with arguments - sync return variant, with optional return type
-template <class F, class FObj, class... Args, std::enable_if_t<std::is_member_function_pointer_v<F>, int> = 0>
+template <class F, class FObj, class... Args, cc::enable_if<std::is_member_function_pointer_v<F>> = true>
 [[nodiscard]] auto submit(F func, FObj& inst, Args&&... args)
 {
     static_assert(std::is_invocable_v<F, FObj, Args...>, "function must be invocable with the given args");
@@ -349,7 +350,7 @@ template <class F, class FObj, class... Args, std::enable_if_t<std::is_member_fu
 }
 
 // Lambda with arguments - sync return variant, with optional return type
-template <class F, class... Args, std::enable_if_t<std::is_invocable_v<F, Args...> && !std::is_member_function_pointer_v<F>, int> = 0>
+template <class F, class... Args, cc::enable_if<std::is_invocable_v<F, Args...> && !std::is_member_function_pointer_v<F>> = true>
 [[nodiscard]] auto submit(F&& fun, Args&&... args)
 {
     static_assert(std::is_invocable_v<F, Args...>, "function must be invocable with the given args");
