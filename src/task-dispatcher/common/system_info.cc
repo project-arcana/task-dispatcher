@@ -1,12 +1,15 @@
 #include "system_info.hh"
 
-#include <clean-core/macros.hh>
 #include <new>
 #include <thread>
+
+#include <clean-core/macros.hh>
 
 #ifdef CC_OS_WINDOWS
 #include <clean-core/array.hh>
 #include <clean-core/native/win32_sanitized.hh>
+#elif defined(CC_OS_LINUX)
+#include <unistd.h>
 #endif
 
 #ifdef CC_COMPILER_MSVC
@@ -55,8 +58,18 @@ unsigned td::system::num_physical_cores() noexcept
     }
 
     return res_num_cores;
+#elif defined(CC_OS_LINUX)
+    uint32_t registers[4];
+    __asm__ __volatile__("cpuid " : "=a"(registers[0]), "=b"(registers[1]), "=c"(registers[2]), "=d"(registers[3]) : "a"(1), "c"(0));
+
+    auto const feature_set_flags = registers[3];
+    bool const has_hyperthreading = feature_set_flags & (1 << 28);
+
+    if (has_hyperthreading)
+        return num_logical_cores() / 2;
+    else
+        return num_logical_cores();
 #else
-    CC_RUNTIME_ASSERT(false && "unimplemented");
-    return 0;
+#error "Unsupported operating system"
 #endif
 }

@@ -9,5 +9,5 @@ inline size_t constexpr l1_cacheline_size = 64; // std::hardware_destructive_int
 
 // == Run time system info ==
 [[nodiscard]] unsigned num_logical_cores() noexcept;  // std::thread::hardware_concurrency
-[[nodiscard]] unsigned num_physical_cores() noexcept; // platform-specific, potentially expensive
+[[nodiscard]] unsigned num_physical_cores() noexcept; // platform-specific, expensive on Windows
 }
