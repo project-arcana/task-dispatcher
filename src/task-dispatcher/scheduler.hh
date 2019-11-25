@@ -23,7 +23,7 @@ struct fiber_t;
 struct scheduler_config
 {
     unsigned num_fibers = 256;
-    unsigned num_threads = system::hardware_concurrency;
+    unsigned num_threads = system::num_logical_cores();
     unsigned max_num_counters = 512;
     unsigned max_num_tasks = 4096;
     cc::size_t fiber_stack_size = 64 * 1024;

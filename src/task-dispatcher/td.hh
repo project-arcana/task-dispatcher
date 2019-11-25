@@ -245,7 +245,7 @@ void submit_each_copy(sync& sync, F&& func, cc::span<T> vals)
 
 // Lambda called for each batch, with batch start and end
 template <class F>
-void submit_batched(sync& sync, F&& func, unsigned n, unsigned num_batches_max = td::system::hardware_concurrency * 4)
+void submit_batched(sync& sync, F&& func, unsigned n, unsigned num_batches_max = td::system::num_logical_cores() * 4)
 {
     static_assert(std::is_invocable_v<F, unsigned, unsigned>, "function must be invocable with batch start and end argument");
     static_assert(std::is_same_v<std::invoke_result_t<F, unsigned, unsigned>, void>, "return must be void");
@@ -266,7 +266,7 @@ void submit_batched(sync& sync, F&& func, unsigned n, unsigned num_batches_max =
 
 // Lambda called for each batch, with batch start, end, and batch index
 template <class F>
-void submit_batched_n(sync& sync, F&& func, unsigned n, unsigned num_batches_max = td::system::hardware_concurrency * 4)
+void submit_batched_n(sync& sync, F&& func, unsigned n, unsigned num_batches_max = td::system::num_logical_cores() * 4)
 {
     static_assert(std::is_invocable_v<F, unsigned, unsigned, unsigned>, "function must be invocable with batch start, end, and index argument");
     static_assert(std::is_same_v<std::invoke_result_t<F, unsigned, unsigned, unsigned>, void>, "return must be void");
@@ -431,7 +431,7 @@ template <class T, class F>
 }
 
 template <class F>
-[[nodiscard]] sync submit_batched(F&& func, unsigned n, unsigned num_batches_max = td::system::hardware_concurrency * 4)
+[[nodiscard]] sync submit_batched(F&& func, unsigned n, unsigned num_batches_max = td::system::num_logical_cores() * 4)
 {
     static_assert(std::is_invocable_v<F, unsigned, unsigned>, "function must be invocable with batch start and end argument");
     static_assert(std::is_same_v<std::invoke_result_t<F, unsigned, unsigned>, void>, "return must be void");
@@ -441,7 +441,7 @@ template <class F>
 }
 
 template <class F>
-[[nodiscard]] sync submit_batched_n(F&& func, unsigned n, unsigned num_batches_max = td::system::hardware_concurrency * 4)
+[[nodiscard]] sync submit_batched_n(F&& func, unsigned n, unsigned num_batches_max = td::system::num_logical_cores() * 4)
 {
     static_assert(std::is_invocable_v<F, unsigned, unsigned, unsigned>, "function must be invocable with batch start, end, and index argument");
     static_assert(std::is_same_v<std::invoke_result_t<F, unsigned, unsigned, unsigned>, void>, "return must be void");
