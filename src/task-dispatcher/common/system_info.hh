@@ -4,9 +4,10 @@
 
 namespace td::system
 {
-// == Compile time system info ==
+// == Compile time architecture info ==
 inline size_t constexpr l1_cacheline_size = 64; // std::hardware_destructive_interference_size assumption, verified in .cc
 
 // == Run time system info ==
-extern unsigned const hardware_concurrency; // std::thread::hardware_concurrency()
+[[nodiscard]] unsigned num_logical_cores() noexcept;  // std::thread::hardware_concurrency
+[[nodiscard]] unsigned num_physical_cores() noexcept; // platform-specific, potentially expensive
 }

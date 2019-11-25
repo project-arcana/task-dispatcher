@@ -504,7 +504,7 @@ td::Scheduler::Scheduler(scheduler_config const& config)
     mFreeCounters(config.max_num_counters)
 {
     CC_ASSERT(config.is_valid() && "Scheduler config invalid, use scheduler_config_t::validate()");
-    CC_ASSERT((config.num_threads <= system::hardware_concurrency) && "More threads than physical cores configured");
+    CC_ASSERT((config.num_threads <= system::num_logical_cores()) && "More threads than physical cores configured");
 
     static_assert(ATOMIC_INT_LOCK_FREE == 2 && ATOMIC_BOOL_LOCK_FREE == 2, "No lock-free atomics available on this platform");
     static_assert(invalid_fiber == std::numeric_limits<fiber_index_t>().max(), "Invalid fiber index corrupt");
