@@ -5,6 +5,7 @@
 
 #include <clean-core/enable_if.hh>
 #include <clean-core/move.hh>
+#include <clean-core/forward.hh>
 #include <clean-core/new.hh>
 #include <clean-core/typedefs.hh>
 
@@ -42,7 +43,7 @@ public:
     template <class T, cc::enable_if<std::is_invocable_r_v<void, T> && std::is_class_v<T>> = true>
     explicit task(T&& l)
     {
-        lambda(std::forward<T>(l));
+        lambda(cc::forward<T>(l));
     }
 
     // From function pointer and userdata void*
