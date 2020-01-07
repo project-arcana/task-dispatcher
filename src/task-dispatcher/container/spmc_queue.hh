@@ -181,7 +181,7 @@ public:
         }
         else
         {
-            out_ref = a->get(b - 1);
+            out_ref = a->get(b - 1ull);
             success = true;
 
             if (size <= a->size() / 3 && size > 1 << log_initial_size)
@@ -310,7 +310,7 @@ public:
     //
     // Used when we're passing the stealer end around in the same
     // thread.
-    Stealer(Stealer<T>&& s) : deque(std::move(s.deque)), buffer_data(s.buffer_data) {}
+    Stealer(Stealer<T>&& s) noexcept : deque(std::move(s.deque)), buffer_data(s.buffer_data) {}
 
     ~Stealer() = default;
 
