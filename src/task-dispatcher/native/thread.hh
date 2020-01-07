@@ -48,7 +48,11 @@ inline bool create_thread(size_t stack_size, thread_start_func_t start_routine, 
     CC_ASSERT(stack_size <= unsigned(-1));
     auto const handle = reinterpret_cast<::HANDLE>(::_beginthreadex(nullptr, unsigned(stack_size), start_routine, arg, 0U, nullptr));
     return_thread->handle = handle;
-    return_thread->id = ::GetThreadId(handle);
+
+    if (handle != 0)
+    {
+        return_thread->id = ::GetThreadId(handle);
+    }
 
     return handle != nullptr;
 }

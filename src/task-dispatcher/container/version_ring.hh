@@ -2,6 +2,8 @@
 
 #include <atomic>
 
+#include <clean-core/array.hh>
+
 namespace td::container
 {
 // Thread safe, handle-based versioned ring buffer
@@ -13,7 +15,7 @@ struct VersionRing
     static_assert(N < unsigned(-1) / 2, "VersionRing too large");
 
 private:
-    T mData[N];
+    cc::array<T, N> mData = {};
     std::atomic_uint mVersion = 0;
 
     VersionRing(VersionRing const& other) = delete;
