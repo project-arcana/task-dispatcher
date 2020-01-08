@@ -13,6 +13,8 @@
 #include "native/fiber.hh"
 #include "native/thread.hh"
 
+#include <cstdio>
+
 namespace
 {
 // Configure task distribution strategy
