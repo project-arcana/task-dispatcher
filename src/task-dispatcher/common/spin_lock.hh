@@ -8,9 +8,6 @@ namespace td
 // can be used with std::lock_guard
 struct SpinLock
 {
-private:
-    std::atomic_flag mFlag;
-
 public:
     SpinLock() = default;
     ~SpinLock() = default;
@@ -32,6 +29,9 @@ public:
     SpinLock(SpinLock&& other) noexcept = delete;
     SpinLock& operator=(SpinLock const& other) = delete;
     SpinLock& operator=(SpinLock&& other) noexcept = delete;
+
+private:
+    std::atomic_flag mFlag;
 };
 
 template <typename T>

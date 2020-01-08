@@ -14,15 +14,6 @@ struct VersionRing
     static_assert(N > 0);
     static_assert(N < unsigned(-1) / 2, "VersionRing too large");
 
-private:
-    cc::array<T, N> mData = {};
-    std::atomic_uint mVersion = 0;
-
-    VersionRing(VersionRing const& other) = delete;
-    VersionRing(VersionRing&& other) noexcept = delete;
-    VersionRing& operator=(VersionRing const& other) = delete;
-    VersionRing& operator=(VersionRing&& other) noexcept = delete;
-
 public:
     explicit VersionRing() = default;
 
@@ -42,5 +33,14 @@ public:
     [[nodiscard]] T const& get(unsigned handle) const { return mData[handle % N]; }
 
     void reset() { mVersion.store(0, std::memory_order_release); }
+
+private:
+    cc::array<T, N> mData = {};
+    std::atomic_uint mVersion = 0;
+
+    VersionRing(VersionRing const& other) = delete;
+    VersionRing(VersionRing&& other) noexcept = delete;
+    VersionRing& operator=(VersionRing const& other) = delete;
+    VersionRing& operator=(VersionRing&& other) noexcept = delete;
 };
 }

@@ -90,16 +90,16 @@ inline void set_low_thread_prio() {}
 
 struct fiber_t
 {
-    ucontext_t fib;
-    jmp_buf jmp;
+    ::ucontext_t fib;
+    ::jmp_buf jmp;
 };
 
 struct fiber_ctx_t
 {
     void (*fnc)(void*);
     void* ctx;
-    jmp_buf* cur;
-    ucontext_t* prv;
+    ::jmp_buf* cur;
+    ::ucontext_t* prv;
 };
 
 static void fiber_start_fnc(void* p)
@@ -107,15 +107,15 @@ static void fiber_start_fnc(void* p)
     fiber_ctx_t* ctx = reinterpret_cast<fiber_ctx_t*>(p);
     void (*volatile ufnc)(void*) = ctx->fnc;
     void* volatile uctx = ctx->ctx;
-    if (_setjmp(*ctx->cur) == 0)
+    if (::_setjmp(*ctx->cur) == 0)
     {
-        ucontext_t tmp;
-        swapcontext(&tmp, ctx->prv);
+        ::ucontext_t tmp;
+        ::swapcontext(&tmp, ctx->prv);
     }
     ufnc(uctx);
 }
 
-inline void create_main_fiber(fiber_t& fib) { memset(&fib, 0, sizeof(fib)); }
+inline void create_main_fiber(fiber_t& fib) { std::memset(&fib, 0, sizeof(fib)); }
 
 inline void delete_main_fiber(fiber_t&)
 {
@@ -124,22 +124,22 @@ inline void delete_main_fiber(fiber_t&)
 
 inline void create_fiber(fiber_t& fib, void (*ufnc)(void*), void* uctx, size_t stack_size, allocator const& alloc = default_alloc)
 {
-    getcontext(&fib.fib);
+    ::getcontext(&fib.fib);
     fib.fib.uc_stack.ss_sp = alloc.alloc(stack_size);
     fib.fib.uc_stack.ss_size = stack_size;
     fib.fib.uc_link = nullptr;
-    ucontext_t tmp;
+    ::ucontext_t tmp;
     fiber_ctx_t ctx = {ufnc, uctx, &fib.jmp, &tmp};
-    makecontext(&fib.fib, reinterpret_cast<void (*)()>(fiber_start_fnc), 1, &ctx);
-    swapcontext(&tmp, &fib.fib);
+    ::makecontext(&fib.fib, reinterpret_cast<void (*)()>(fiber_start_fnc), 1, &ctx);
+    ::swapcontext(&tmp, &fib.fib);
 }
 
 inline void delete_fiber(fiber_t& fib, allocator const& alloc = default_alloc) { alloc.free(fib.fib.uc_stack.ss_sp); }
 
 inline void switch_to_fiber(fiber_t& fib, fiber_t& prv)
 {
-    if (_setjmp(prv.jmp) == 0)
-        _longjmp(fib.jmp, 1);
+    if (::_setjmp(prv.jmp) == 0)
+        ::_longjmp(fib.jmp, 1);
 }
 
 #endif
