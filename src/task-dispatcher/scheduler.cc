@@ -495,9 +495,9 @@ void td::Scheduler::counterIncrement(td::Scheduler::atomic_counter_t& counter, i
 
 td::Scheduler::Scheduler(scheduler_config const& config)
   : mFiberStackSize(config.fiber_stack_size),
-    mThreads(cc::array<worker_thread_t>::defaulted(config.num_threads)),
-    mFibers(cc::array<worker_fiber_t>::defaulted(config.num_fibers)),
-    mCounters(cc::array<atomic_counter_t>::defaulted(config.max_num_counters)),
+    mThreads(cc::fwd_array<worker_thread_t>::defaulted(config.num_threads)),
+    mFibers(cc::fwd_array<worker_fiber_t>::defaulted(config.num_fibers)),
+    mCounters(cc::fwd_array<atomic_counter_t>::defaulted(config.max_num_counters)),
     mTasks(config.max_num_tasks),
     mIdleFibers(mFibers.size()),
     mResumableFibers(mFibers.size()), // TODO: Smaller?
@@ -596,9 +596,9 @@ void td::Scheduler::wait(td::sync& sync, bool pinnned, int target)
 void td::Scheduler::start(td::container::task main_task)
 {
     // Re-default all arrays, as multiple starts are possible
-    mThreads = cc::array<worker_thread_t>::defaulted(mThreads.size());
-    mFibers = cc::array<worker_fiber_t>::defaulted(mFibers.size());
-    mCounters = cc::array<atomic_counter_t>::defaulted(mCounters.size());
+    mThreads = cc::fwd_array<worker_thread_t>::defaulted(mThreads.size());
+    mFibers = cc::fwd_array<worker_fiber_t>::defaulted(mFibers.size());
+    mCounters = cc::fwd_array<atomic_counter_t>::defaulted(mCounters.size());
 
     mIsShuttingDown.store(false, std::memory_order_seq_cst);
 
