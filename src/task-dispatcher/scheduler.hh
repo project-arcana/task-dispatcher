@@ -2,7 +2,7 @@
 
 #include <atomic>
 
-#include <clean-core/array.hh>
+#include <clean-core/fwd_array.hh>
 #include <clean-core/typedefs.hh>
 
 #include <task-dispatcher/common/system_info.hh>
@@ -89,9 +89,9 @@ private:
     size_t const mFiberStackSize;
     std::atomic_bool mIsShuttingDown = {false};
 
-    cc::array<worker_thread_t> mThreads;
-    cc::array<worker_fiber_t> mFibers;
-    cc::array<atomic_counter_t> mCounters;
+    cc::fwd_array<worker_thread_t> mThreads;
+    cc::fwd_array<worker_fiber_t> mFibers;
+    cc::fwd_array<atomic_counter_t> mCounters;
 
     // Queues
     container::MPMCQueue<container::task> mTasks;
