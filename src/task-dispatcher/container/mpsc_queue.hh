@@ -3,6 +3,7 @@
 #include <cstddef>
 
 #include <clean-core/assert.hh>
+#include <clean-core/array.hh>
 
 namespace td::container
 {
@@ -16,7 +17,7 @@ class FIFOQueue
 private:
     int mHead = -1;
     int mTail = -1;
-    T mData[N];
+    cc::array<T, N> mData = {};
 
 public:
     FIFOQueue() = default;

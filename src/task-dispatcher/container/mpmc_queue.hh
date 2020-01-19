@@ -16,7 +16,7 @@ template <typename T>
 class MPMCQueue
 {
 public:
-    MPMCQueue(size_t buffer_size) : mBuffer(new cell[buffer_size]), mBufferMask(buffer_size - 1)
+    MPMCQueue(size_t buffer_size) : mBuffer(new cell[buffer_size]()), mBufferMask(buffer_size - 1)
     {
         CC_ASSERT((buffer_size >= 2) && ((buffer_size & (buffer_size - 1)) == 0) && "MPMCQueue size not a power of two");
         for (size_t i = 0; i != buffer_size; i += 1)

@@ -1,11 +1,13 @@
 #include "scheduler.hh"
 
 #include <limits> // Only for sanity check static_asserts
+#include <cstdio>
 
 #include <clean-core/allocate.hh>
 #include <clean-core/assert.hh>
 #include <clean-core/macros.hh>
 #include <clean-core/vector.hh>
+#include <clean-core/array.hh>
 
 #include "common/spin_lock.hh"
 #include "container/mpsc_queue.hh"
@@ -25,7 +27,13 @@ namespace
 // If false:
 //  use a single, fixed size MPMC queue
 //      in Scheduler::mTasks
-auto constexpr s_use_workstealing = false;
+constexpr bool const gc_use_workstealing = false;
+
+// If true, let worker threads sleep 1ms while no jobs are available
+constexpr bool const gc_sleep_if_empty = true;
+
+// If true, print a warning to stderr if a deadlocks is heuristically detected
+constexpr bool const gc_warn_deadlocks = true;
 }
 
 thread_local td::Scheduler* td::Scheduler::sCurrentScheduler = nullptr;
@@ -46,16 +54,16 @@ struct Scheduler::atomic_counter_t
 
     std::atomic<int> count; // The value of this counter
 
-    static auto constexpr max_waiting = 16;
-    waiting_fiber_t waiting_fibers[max_waiting];
-    std::atomic_bool free_waiting_slots[max_waiting];
+    static constexpr unsigned max_waiting = 16;
+    cc::array<waiting_fiber_t, max_waiting> waiting_fibers = {};
+    cc::array<std::atomic_bool, max_waiting> free_waiting_slots = {};
 
     // Resets this counter for re-use
     void reset()
     {
         count.store(0, std::memory_order_release);
 
-        for (auto i = 0; i < max_waiting; ++i)
+        for (auto i = 0u; i < max_waiting; ++i)
             free_waiting_slots[i].store(true);
     }
 
@@ -71,7 +79,7 @@ enum class Scheduler::fiber_destination_e : cc::uint8
 
 struct Scheduler::worker_thread_t
 {
-    native::thread_t native;
+    native::thread_t native = {};
 
     // queue containing fibers that are pinned to this thread are ready to resume
     // same restrictions as for _resumable_fibers apply (worker_fiber_t::is_waiting_cleaned_up)
@@ -82,7 +90,7 @@ struct Scheduler::worker_thread_t
 
 struct Scheduler::worker_fiber_t
 {
-    native::fiber_t native;
+    native::fiber_t native = {};
 
     // True if this fiber is currently waiting (called yield_to_fiber with destination waiting)
     // and has been cleaned up by the fiber it yielded to (via clean_up_prev_fiber)
@@ -91,7 +99,7 @@ struct Scheduler::worker_fiber_t
 
 struct Scheduler::tls_t
 {
-    native::fiber_t thread_fiber; // thread fiber, not part of scheduler::mFibers
+    native::fiber_t thread_fiber = {}; // thread fiber, not part of scheduler::mFibers
 
     fiber_index_t current_fiber_index = invalid_fiber;
     fiber_index_t previous_fiber_index = invalid_fiber;
@@ -141,10 +149,10 @@ struct Scheduler::tls_t
 
         for (auto i = 0u; i < chase_lev_stealers.size(); ++i)
         {
-            auto const target_i = (last_steal_target + i) % chase_lev_stealers.size();
+            thread_index_t const target_i = (last_steal_target + i) % static_cast <thread_index_t>(chase_lev_stealers.size());
             if (chase_lev_stealers[target_i].steal(out_ref))
             {
-                last_steal_target = thread_index_t(target_i);
+                last_steal_target = target_i;
                 return true;
             }
         }
@@ -189,7 +197,7 @@ struct Scheduler::callback_funcs
         s_tls.thread_index = worker_arg->index;
 
         // Set up chase lev deques
-        if constexpr (s_use_workstealing)
+        if constexpr (gc_use_workstealing)
             s_tls.prepare_chase_lev(worker_arg->chase_lev_deques, worker_arg->index);
 
         // Clean up allocated argument
@@ -229,8 +237,13 @@ struct Scheduler::callback_funcs
             }
             else
             {
-                // Task queue is empty, sleep 1ms to reduce contention
-                native::thread_sleep(1);
+                // Task queue is empty
+
+                if constexpr (gc_sleep_if_empty)
+                {
+                    // Sleep 1ms to reduce contention
+                    native::thread_sleep(1);
+                }
             }
         }
 
@@ -266,8 +279,13 @@ td::Scheduler::fiber_index_t td::Scheduler::acquireFreeFiber()
         if (mIdleFibers.dequeue(res))
             return res;
 
-        if (attempt > 10)
-            fprintf(stderr, "Scheduler warning: Failing to find free fiber, possibly deadlocked\n");
+        if constexpr (gc_warn_deadlocks)
+        {
+            if (attempt > 10)
+            {
+                std::fprintf(stderr, "[td] Scheduler warning: Failing to find free fiber, possibly deadlocked\n");
+            }
+        }
     }
 }
 
@@ -366,7 +384,7 @@ bool td::Scheduler::getNextTask(td::container::task& task)
     }
 
     // Pending tasks
-    if constexpr (s_use_workstealing)
+    if constexpr (gc_use_workstealing)
         return s_tls.get_task(task);
     else
         return mTasks.dequeue(task);
@@ -544,7 +562,7 @@ void td::Scheduler::submitTasks(td::container::task* tasks, unsigned num_tasks, 
     {
         tasks[i].set_metadata(counter_index);
 
-        if constexpr (s_use_workstealing)
+        if constexpr (gc_use_workstealing)
             s_tls.chase_lev_worker.push(tasks[i]);
         else
             success &= mTasks.enqueue(tasks[i]);
@@ -638,7 +656,7 @@ void td::Scheduler::start(td::container::task main_task)
 
         s_tls.thread_index = 0;
 
-        if constexpr (s_use_workstealing)
+        if constexpr (gc_use_workstealing)
         {
             thread_deques.reserve(mThreads.size());
             for (auto i = 0u; i < mThreads.size(); ++i)
