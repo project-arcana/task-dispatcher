@@ -3,7 +3,7 @@
 #include <cstdint>
 
 #ifdef _MSC_VER
-#include <clean-core/native/win32_sanitized.hh>
+#include <intrin.h>
 #endif
 
 namespace td::intrin
@@ -11,7 +11,7 @@ namespace td::intrin
 inline uint32_t bsr(uint32_t v)
 {
 #ifdef _MSC_VER
-    DWORD index;
+    unsigned long index;
     _BitScanReverse(&index, v);
     return index;
 #elif defined __GNUC__
@@ -22,20 +22,11 @@ inline uint32_t bsr(uint32_t v)
 inline uint32_t bsr(uint64_t v)
 {
 #ifdef _MSC_VER
-    DWORD index;
+    unsigned long index;
     _BitScanReverse64(&index, v);
     return index;
 #elif defined __GNUC__
     return sizeof(v) * 8 - __builtin_clzll(v);
-#endif
-}
-
-inline uint32_t cas(volatile uint32_t* dst, uint32_t cmp, uint32_t exc)
-{
-#ifdef _MSC_VER
-    return _InterlockedCompareExchange(dst, exc, cmp);
-#elif defined __GNUC__
-    return __sync_val_compare_and_swap(dst, cmp, exc);
 #endif
 }
 
