@@ -42,17 +42,17 @@ inline void wait_for_unpinned(sync& sync) { Scheduler::current().wait(sync, fals
 template <class... STs>
 void wait_for(STs&... syncs)
 {
-    using firstST = typename std::tuple_element<0, std::tuple<STs...>>::type;
-    static_assert(std::is_same_v<firstST, sync>, "td::wait_for: wrong argument type - check if the sync objects are not const");
-    (wait_for(syncs), ...);
+    static_assert(std::is_same_v<typename std::tuple_element<0, std::tuple<STs...>>::type, sync>, "td::wait_for: wrong argument type - check if the "
+                                                                                                  "sync objects are not const");
+    (Scheduler::current().wait(syncs, true, 0), ...);
 }
 
 template <class... STs>
 void wait_for_unpinned(STs&... syncs)
 {
-    using firstST = typename std::tuple_element<0, std::tuple<STs...>>::type;
-    static_assert(std::is_same_v<firstST, sync>, "td::wait_for_unpinned: wrong argument type - check if the sync objects are not const");
-    (wait_for_unpinned(syncs), ...);
+    static_assert(std::is_same_v<typename std::tuple_element<0, std::tuple<STs...>>::type, sync>, "td::wait_for_unpinned: wrong argument type - "
+                                                                                                  "check if the sync objects are not const");
+    (Scheduler::current().wait(syncs, false, 0), ...);
 }
 
 
