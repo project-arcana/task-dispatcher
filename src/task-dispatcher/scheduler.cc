@@ -32,7 +32,7 @@ constexpr bool const gc_use_workstealing = false;
 // If true, let worker threads sleep 1ms while no jobs are available
 constexpr bool const gc_sleep_if_empty = true;
 
-// If true, print a warning to stderr if a deadlocks is heuristically detected
+// If true, print a warning to stderr if a deadlock is heuristically detected
 constexpr bool const gc_warn_deadlocks = true;
 }
 
