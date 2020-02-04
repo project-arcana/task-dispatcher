@@ -4,10 +4,14 @@
 #include <type_traits>
 
 #include <clean-core/enable_if.hh>
-#include <clean-core/move.hh>
 #include <clean-core/forward.hh>
+#include <clean-core/move.hh>
 #include <clean-core/new.hh>
 #include <clean-core/typedefs.hh>
+
+#ifdef TD_ALLOW_HEAP_TASKS
+#include <clean-core/unique_ptr.hh>
+#endif
 
 #include <task-dispatcher/common/system_info.hh>
 
@@ -57,15 +61,32 @@ public:
     void lambda(T&& l)
     {
         static_assert(std::is_class_v<T> && std::is_invocable_r_v<void, T>);
-        static_assert(sizeof(T) <= sizeof(buffer_t), "Lambda is too large for task buffer");
 
-        new (cc::placement_new, _buffer) T(cc::move(l));
+        if constexpr (sizeof(T) <= sizeof(buffer_t))
+        {
+            new (cc::placement_new, _buffer) T(cc::move(l));
 
-        _exec_cleanup_func = [](cc::byte* buf) {
-            T& ref = *reinterpret_cast<T*>(buf);
-            ref.operator()();
-            ref.~T();
-        };
+            _exec_cleanup_func = [](cc::byte* buf) {
+                T& ref = *reinterpret_cast<T*>(buf);
+                ref.operator()();
+                ref.~T();
+            };
+        }
+        else
+        {
+#ifdef TD_ALLOW_HEAP_TASKS
+            auto heap_lambda = cc::make_unique<T>(cc::move(l));
+            new (cc::placement_new, _buffer) cc::unique_ptr<T>(cc::move(heap_lambda));
+
+            _exec_cleanup_func = [](cc::byte* buf) {
+                cc::unique_ptr<T>& ref = *reinterpret_cast<cc::unique_ptr<T>*>(buf);
+                ref->operator()();
+                ref.~unique_ptr<T>();
+            };
+#else
+            static_assert(sizeof(T) == 0, "Lambda too large, enable TD_ALLOW_HEAP_TASKS or reduce capture size");
+#endif
+        }
     }
 
     // From function pointer of the form void(void*) and userdata void*
