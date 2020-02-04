@@ -9,7 +9,7 @@ include(cmake/UnityBuild.cmake)
 # options
 
 option(TD_ALLOW_HEAP_TASKS "If enabled, automatically create heap-allocated tasks for lambdas exceeding cacheline size" OFF)
-option(TD_ENABLE_SCU "If enabled, compiles this library as a single compilation unit" ON)
+option(TD_ENABLE_UNITY_BUILD "If enabled, compiles this library as a single compilation unit" ON)
 
 # =========================================
 # define library
@@ -20,7 +20,7 @@ file(GLOB_RECURSE HEADERS "src/*.hh")
 source_group(TREE "${CMAKE_CURRENT_SOURCE_DIR}/src" FILES ${SOURCES})
 source_group(TREE "${CMAKE_CURRENT_SOURCE_DIR}/src" FILES ${HEADERS})
 
-if (TD_ENABLE_SCU)
+if (TD_ENABLE_UNITY_BUILD)
     enable_unity_build(task-dispatcher SOURCES 50 cc)
 endif()
 
