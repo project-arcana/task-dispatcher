@@ -9,6 +9,7 @@
 #include <clean-core/move.hh>
 #include <clean-core/span.hh>
 #include <clean-core/unique_ptr.hh>
+#include <clean-core/utility.hh>
 
 #include <task-dispatcher/td-lean.hh>
 
@@ -28,12 +29,6 @@ template <class T = int>
 constexpr T int_div_ceil(T a, T b)
 {
     return 1 + ((a - 1) / b);
-}
-
-template <class T = int>
-constexpr T min(T a, T b)
-{
-    return a < b ? a : b;
 }
 }
 
@@ -187,8 +182,8 @@ void submit_batched(sync& sync, F&& func, unsigned n, unsigned num_batches_max =
 
     auto tasks = cc::array<td::container::task>::uninitialized(num_batches);
 
-    for (auto batch = 0u, batchStart = 0u, batchEnd = detail::min(batch_size, n); batch < num_batches;
-         ++batch, batchStart = batch * batch_size, batchEnd = detail::min((batch + 1) * batch_size, n))
+    for (auto batch = 0u, batchStart = 0u, batchEnd = cc::min(batch_size, n); batch < num_batches;
+         ++batch, batchStart = batch * batch_size, batchEnd = cc::min((batch + 1) * batch_size, n))
         tasks[batch].lambda([=] { func(batchStart, batchEnd); });
 
     submit_raw(sync, tasks.data(), num_batches);
@@ -208,8 +203,8 @@ void submit_batched_n(sync& sync, F&& func, unsigned n, unsigned num_batches_max
 
     auto tasks = cc::array<td::container::task>::uninitialized(num_batches);
 
-    for (auto batch = 0u, batchStart = 0u, batchEnd = detail::min(batch_size, n); batch < num_batches;
-         ++batch, batchStart = batch * batch_size, batchEnd = detail::min((batch + 1) * batch_size, n))
+    for (auto batch = 0u, batchStart = 0u, batchEnd = cc::min(batch_size, n); batch < num_batches;
+         ++batch, batchStart = batch * batch_size, batchEnd = cc::min((batch + 1) * batch_size, n))
         tasks[batch].lambda([=] { func(batchStart, batchEnd, batch); });
 
     submit_raw(sync, tasks.data(), num_batches);
