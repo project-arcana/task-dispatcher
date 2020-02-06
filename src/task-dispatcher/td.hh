@@ -4,6 +4,7 @@
 
 #include <clean-core/array.hh>
 #include <clean-core/assert.hh>
+#include <clean-core/bits.hh>
 #include <clean-core/enable_if.hh>
 #include <clean-core/forward.hh>
 #include <clean-core/move.hh>
@@ -21,18 +22,6 @@
 
 namespace td
 {
-namespace detail
-{
-// Divide ints and round up
-// a > 0, b > 0
-template <class T = int>
-constexpr T int_div_ceil(T a, T b)
-{
-    return 1 + ((a - 1) / b);
-}
-}
-
-
 // Future, move only
 // Can be obtained when submitting invocables with return values
 template <class T>
@@ -175,8 +164,8 @@ void submit_batched(sync& sync, F&& func, unsigned n, unsigned num_batches_max =
     static_assert(std::is_invocable_v<F, unsigned, unsigned>, "function must be invocable with batch start and end argument");
     static_assert(std::is_same_v<std::invoke_result_t<F, unsigned, unsigned>, void>, "return must be void");
 
-    auto batch_size = detail::int_div_ceil(n, num_batches_max);
-    auto num_batches = detail::int_div_ceil(n, batch_size);
+    auto batch_size = cc::int_div_ceil(n, num_batches_max);
+    auto num_batches = cc::int_div_ceil(n, batch_size);
 
     CC_RUNTIME_ASSERT(num_batches <= num_batches_max && "programmer error");
 
@@ -196,8 +185,8 @@ void submit_batched_n(sync& sync, F&& func, unsigned n, unsigned num_batches_max
     static_assert(std::is_invocable_v<F, unsigned, unsigned, unsigned>, "function must be invocable with batch start, end, and index argument");
     static_assert(std::is_same_v<std::invoke_result_t<F, unsigned, unsigned, unsigned>, void>, "return must be void");
 
-    auto batch_size = detail::int_div_ceil(n, num_batches_max);
-    auto num_batches = detail::int_div_ceil(n, batch_size);
+    auto batch_size = cc::int_div_ceil(n, num_batches_max);
+    auto num_batches = cc::int_div_ceil(n, batch_size);
 
     CC_RUNTIME_ASSERT(num_batches <= num_batches_max && "programmer error");
 
