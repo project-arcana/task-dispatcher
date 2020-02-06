@@ -56,7 +56,11 @@ void launch(scheduler_config config, F&& func)
     static_assert(std::is_invocable_v<F>, "function must be invocable without arguments");
     static_assert(std::is_same_v<std::invoke_result_t<F>, void>, "return must be void");
     if (is_scheduler_alive())
+    {
+        // if launch is nested, simply call the lambda without re-init
+        cc::forward<F>(func).operator()();
         return;
+    }
 
     config.ceil_to_pow2();
     CC_ASSERT(config.is_valid() && "Scheduler configuration invalid");
