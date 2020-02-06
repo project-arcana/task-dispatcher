@@ -6,11 +6,10 @@
 #include <clean-core/typedefs.hh>
 
 #include <task-dispatcher/common/system_info.hh>
-
-#include "container/mpmc_queue.hh"
-#include "container/task.hh"
-#include "container/version_ring.hh"
-#include "sync.hh"
+#include <task-dispatcher/container/mpmc_queue.hh>
+#include <task-dispatcher/container/task.hh>
+#include <task-dispatcher/container/version_ring.hh>
+#include <task-dispatcher/sync.hh>
 
 namespace td
 {
