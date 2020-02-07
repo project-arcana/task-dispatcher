@@ -30,7 +30,7 @@ namespace
 constexpr bool const gc_use_workstealing = false;
 
 // If true, let worker threads sleep 1ms while no jobs are available
-constexpr bool const gc_sleep_if_empty = true;
+constexpr bool const gc_sleep_if_empty = false;
 
 // If true, print a warning to stderr if a deadlock is heuristically detected
 constexpr bool const gc_warn_deadlocks = true;
