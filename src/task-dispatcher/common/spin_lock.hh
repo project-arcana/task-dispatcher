@@ -2,6 +2,8 @@
 
 #include <atomic>
 
+#include <immintrin.h>
+
 namespace td
 {
 // Simple spinlock, fullfills BasicLockable named requirement
@@ -16,7 +18,9 @@ public:
     {
         // acquire and spin
         while (mFlag.test_and_set(std::memory_order_acquire))
-            ;
+        {
+            _mm_pause();
+        }
     }
 
     void unlock()

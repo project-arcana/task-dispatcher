@@ -9,6 +9,7 @@ include(cmake/UnityBuild.cmake)
 # options
 
 option(TD_ALLOW_HEAP_TASKS "If enabled, automatically create heap-allocated tasks for lambdas exceeding cacheline size" OFF)
+option(TD_NO_SLEEP "If enabled, worker threads do not sleep when idle, minimizing latency at the cost of CPU usage" OFF)
 option(TD_ENABLE_UNITY_BUILD "If enabled, compiles this library as a single compilation unit" ON)
 
 # =========================================
@@ -32,6 +33,10 @@ if (TD_ALLOW_HEAP_TASKS)
     target_compile_definitions(task-dispatcher PUBLIC TD_ALLOW_HEAP_TASKS)
 endif()
 
+if (TD_NO_SLEEP)
+    target_compile_definitions(task-dispatcher PUBLIC TD_NO_SLEEP)
+endif()
+
 # =========================================
 # set up compile flags
 
@@ -42,7 +47,11 @@ if(NOT CMAKE_BUILD_TYPE)
 endif()
 
 if (MSVC)
+    # /GT: fiber-safe optimizations
     target_compile_options(task-dispatcher PUBLIC /MP /GT)
+
+    # Winmm.lib for timeapi.h usage (timeBeginPeriod)
+    target_link_libraries(task-dispatcher PRIVATE "Winmm.lib")
 else()
     # Pthread
     set(THREADS_PREFER_PTHREAD_FLAG ON)

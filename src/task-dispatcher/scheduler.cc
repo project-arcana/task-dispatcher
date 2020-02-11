@@ -1,19 +1,21 @@
 #include "scheduler.hh"
 
-#include <limits> // Only for sanity check static_asserts
 #include <cstdio>
 
+#include <immintrin.h>
+
 #include <clean-core/allocate.hh>
+#include <clean-core/array.hh>
 #include <clean-core/assert.hh>
 #include <clean-core/macros.hh>
 #include <clean-core/vector.hh>
-#include <clean-core/array.hh>
 
 #include "common/spin_lock.hh"
 #include "container/mpsc_queue.hh"
 #include "container/spmc_queue.hh"
 #include "native/fiber.hh"
 #include "native/thread.hh"
+#include "native/util.hh"
 
 namespace
 {
@@ -29,8 +31,13 @@ namespace
 //      in Scheduler::mTasks
 constexpr bool const gc_use_workstealing = false;
 
-// If true, let worker threads sleep 1ms while no jobs are available
-constexpr bool const gc_sleep_if_empty = false;
+// If true, perform an OS-sleep in worker threads when no tasks are available
+constexpr bool const gc_sleep_if_empty =
+#ifdef TD_NO_SLEEP
+    false;
+#else
+    true;
+#endif
 
 // If true, print a warning to stderr if a deadlock is heuristically detected
 constexpr bool const gc_warn_deadlocks = true;
@@ -149,7 +156,7 @@ struct Scheduler::tls_t
 
         for (auto i = 0u; i < chase_lev_stealers.size(); ++i)
         {
-            thread_index_t const target_i = (last_steal_target + i) % static_cast <thread_index_t>(chase_lev_stealers.size());
+            thread_index_t const target_i = (last_steal_target + i) % static_cast<thread_index_t>(chase_lev_stealers.size());
             if (chase_lev_stealers[target_i].steal(out_ref))
             {
                 last_steal_target = target_i;
@@ -241,8 +248,28 @@ struct Scheduler::callback_funcs
 
                 if constexpr (gc_sleep_if_empty)
                 {
-                    // Sleep 1ms to reduce contention
+                    // Sleep to reduce contention
+
+                    // This is in most cases a context switch,
+                    // and can cost multiple OS scheduler time slices (of usually >5ms each)
+                    // As such, worker wakeup latency is rather high (multiple milliseconds)
+                    // However, CPU and power usage is extremely low in the idle case
+                    //
+                    // On Win32, we attempt to increase OS scheduler
+                    // granularity to 1ms at startup, making this less costly
+
                     native::thread_sleep(1);
+                }
+                else
+                {
+                    // SSE2 pause instruction
+
+                    // hints the CPU that this is a spin-wait, improving power usage
+                    // and post-loop wakeup time (falls back to nop on pre-SSE2)
+                    //
+                    // (not at all OS scheduler related, and CPU usage is still 100%)
+
+                    _mm_pause();
                 }
             }
         }
@@ -523,11 +550,6 @@ td::Scheduler::Scheduler(scheduler_config const& config)
 {
     CC_ASSERT(config.is_valid() && "Scheduler config invalid, use scheduler_config_t::validate()");
     CC_ASSERT((config.num_threads <= system::num_logical_cores()) && "More threads than physical cores configured");
-
-    static_assert(ATOMIC_INT_LOCK_FREE == 2 && ATOMIC_BOOL_LOCK_FREE == 2, "No lock-free atomics available on this platform");
-    static_assert(invalid_fiber == std::numeric_limits<fiber_index_t>().max(), "Invalid fiber index corrupt");
-    static_assert(invalid_thread == std::numeric_limits<thread_index_t>().max(), "Invalid thread index corrupt");
-    static_assert(invalid_counter == std::numeric_limits<counter_index_t>().max(), "Invalid counter index corrupt");
 }
 
 td::Scheduler::~Scheduler()
@@ -620,6 +642,8 @@ void td::Scheduler::start(td::container::task main_task)
 
     mIsShuttingDown.store(false, std::memory_order_seq_cst);
 
+    native::maximize_os_scheduler_granularity();
+
     // Initialize main thread variables, create the thread fiber
     // The main thread is thread 0 by convention
     auto& main_thread = mThreads[0];
@@ -704,7 +728,7 @@ void td::Scheduler::start(td::container::task main_task)
         // Spin until shutdown has propagated
         while (mIsShuttingDown.load(std::memory_order_seq_cst) != true)
         {
-            // Spin
+            _mm_pause();
         }
 
         // Delete the main fiber
