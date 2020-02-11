@@ -9,7 +9,7 @@ include(cmake/UnityBuild.cmake)
 # options
 
 option(TD_ALLOW_HEAP_TASKS "If enabled, automatically create heap-allocated tasks for lambdas exceeding cacheline size" OFF)
-option(TD_NO_SLEEP "If enabled, worker threads do not sleep when idle, minimizing latency at the cost of CPU usage" OFF)
+option(TD_NO_SLEEP "If enabled, worker threads do not sleep when idle, minimizing latency and maximizing throughput at the cost of CPU usage" OFF)
 option(TD_ENABLE_UNITY_BUILD "If enabled, compiles this library as a single compilation unit" ON)
 
 # =========================================
