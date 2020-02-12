@@ -4,86 +4,39 @@
 
 #include <clean-core/array.hh>
 #include <clean-core/assert.hh>
+#include <clean-core/bits.hh>
 #include <clean-core/enable_if.hh>
 #include <clean-core/forward.hh>
 #include <clean-core/move.hh>
 #include <clean-core/span.hh>
 #include <clean-core/unique_ptr.hh>
+#include <clean-core/utility.hh>
 
-#include "container/task.hh"
-#include "scheduler.hh"
-#include "sync.hh"
+#include <task-dispatcher/td-lean.hh>
+
+// td.hh
+// full task-dispatcher API
+//
+// contains additional batch-convenience submit variants,
+// td::future submit and pointer-to-member-function submit
 
 namespace td
 {
-namespace detail
-{
-// Divide ints and round up
-// a > 0, b > 0
-template <class T = int>
-constexpr T int_div_ceil(T a, T b)
-{
-    return 1 + ((a - 1) / b);
-}
-
-template <class T = int>
-constexpr T min(T a, T b)
-{
-    return a < b ? a : b;
-}
-}
-
-// ==========
-// Wait
-
-inline void wait_for(sync& sync) { Scheduler::current().wait(sync, true, 0); }
-inline void wait_for_unpinned(sync& sync) { Scheduler::current().wait(sync, false, 0); }
-
-template <class... STs>
-void wait_for(STs&... syncs)
-{
-    (Scheduler::current().wait(syncs, true, 0), ...);
-}
-
-template <class... STs>
-void wait_for_unpinned(STs&... syncs)
-{
-    (Scheduler::current().wait(syncs, false, 0), ...);
-}
-
-
-// ==========
-// Getter / Miscellaneous
-
-/// returns true if the call is being made from within a scheduler
-[[nodiscard]] inline bool is_scheduler_alive() { return Scheduler::isInsideScheduler(); }
-
-/// returns the amount of threads the current scheduler has, only call if is_scheduler_alive() == true
-[[nodiscard]] inline size_t get_current_num_threads() { return Scheduler::current().getNumThreads(); }
-
 // Future, move only
 // Can be obtained when submitting invocables with return values
 template <class T>
 struct future
 {
 public:
-    future() : _value(cc::make_unique<T>()) {}
-    ~future()
-    {
-        // Enforce sync guarantee
-        if (_sync.initialized)
-            ::td::wait_for(_sync);
-    }
-
     [[nodiscard]] T const& get()
     {
-        ::td::wait_for(_sync);
+        td::wait_for(_sync);
         return *_value;
     }
 
     [[nodiscard]] T const& get_unpinned()
     {
-        ::td::wait_for_unpinned(_sync);
+        td::wait_for_unpinned(_sync);
         return *_value;
     }
 
@@ -91,15 +44,31 @@ public:
 
     void set_sync(sync s) { _sync = s; }
 
+public:
+    future() : _value(cc::make_unique<T>()) {}
+    ~future()
+    {
+        // Enforce sync guarantee
+        if (_sync.initialized)
+            td::wait_for(_sync);
+    }
+
     future(future&) = delete;
     future& operator=(future&) = delete;
 
     future(future&& rhs) noexcept : _sync(rhs._sync), _value(cc::move(rhs._value)) { rhs._sync.initialized = false; }
     future& operator=(future&& rhs) noexcept
     {
-        _sync = rhs._sync;
-        _value = cc::move(rhs._value);
-        rhs._sync.initialized = false;
+        if (this != &rhs)
+        {
+            if (_sync.initialized)
+                td::wait_for(_sync);
+
+            _sync = rhs._sync;
+            _value = cc::move(rhs._value);
+            rhs._sync.initialized = false;
+        }
+        return *this;
     }
 
 private:
@@ -108,44 +77,7 @@ private:
 };
 
 // ==========
-// Launch
-
-template <class F>
-void launch(scheduler_config config, F&& func)
-{
-    static_assert(std::is_invocable_v<F>, "function must be invocable without arguments");
-    static_assert(std::is_same_v<std::invoke_result_t<F>, void>, "return must be void");
-    if (is_scheduler_alive())
-        return;
-
-    config.ceil_to_pow2();
-    CC_ASSERT(config.is_valid() && "Scheduler configuration invalid");
-    Scheduler scheduler(config);
-    container::task mainTask;
-    mainTask.lambda(cc::forward<F>(func));
-    scheduler.start(mainTask);
-}
-
-template <class F>
-void launch(F&& func)
-{
-    return launch(scheduler_config{}, cc::forward<F>(func));
-}
-
-template <class F>
-void launch_singlethreaded(F&& func)
-{
-    scheduler_config config;
-    config.num_threads = 1;
-    return launch(config, cc::forward<F>(func));
-}
-
-// ==========
 // Submit
-
-// Raw submit from constructed Task types
-inline void submit_raw(sync& sync, container::task* tasks, unsigned num) { td::Scheduler::current().submitTasks(tasks, num, sync); }
-inline void submit_raw(sync& sync, cc::span<container::task> tasks) { submit_raw(sync, tasks.data(), unsigned(tasks.size())); }
 
 // TODO Single pointer to member with arguments
 // template <class F, class FObj, class... Args>
@@ -157,21 +89,6 @@ inline void submit_raw(sync& sync, cc::span<container::task> tasks) { submit_raw
 //    container::task dispatch([fun, args..., &inst] { (inst.*fun)(args...); });
 //    Scheduler::current().submitTasks(&dispatch, 1, s);
 //}
-
-// Single lambda
-template <class F, cc::enable_if<std::is_invocable_r_v<void, F>> = true>
-void submit(sync& sync, F&& func)
-{
-    static_assert(std::is_invocable_v<F>, "function must be invocable without arguments");
-    static_assert(std::is_invocable_r_v<void, F>, "return must be void");
-
-    container::task dispatch;
-    if constexpr (std::is_class_v<F>)
-        dispatch.lambda(cc::forward<F>(func));
-    else
-        dispatch.lambda([=] { func(); });
-    submit_raw(sync, &dispatch, 1);
-}
 
 // Single lambda with arguments
 template <class F, class... Args>
@@ -247,15 +164,15 @@ void submit_batched(sync& sync, F&& func, unsigned n, unsigned num_batches_max =
     static_assert(std::is_invocable_v<F, unsigned, unsigned>, "function must be invocable with batch start and end argument");
     static_assert(std::is_same_v<std::invoke_result_t<F, unsigned, unsigned>, void>, "return must be void");
 
-    auto batch_size = detail::int_div_ceil(n, num_batches_max);
-    auto num_batches = detail::int_div_ceil(n, batch_size);
+    auto batch_size = cc::int_div_ceil(n, num_batches_max);
+    auto num_batches = cc::int_div_ceil(n, batch_size);
 
     CC_RUNTIME_ASSERT(num_batches <= num_batches_max && "programmer error");
 
     auto tasks = cc::array<td::container::task>::uninitialized(num_batches);
 
-    for (auto batch = 0u, batchStart = 0u, batchEnd = detail::min(batch_size, n); batch < num_batches;
-         ++batch, batchStart = batch * batch_size, batchEnd = detail::min((batch + 1) * batch_size, n))
+    for (auto batch = 0u, batchStart = 0u, batchEnd = cc::min(batch_size, n); batch < num_batches;
+         ++batch, batchStart = batch * batch_size, batchEnd = cc::min((batch + 1) * batch_size, n))
         tasks[batch].lambda([=] { func(batchStart, batchEnd); });
 
     submit_raw(sync, tasks.data(), num_batches);
@@ -268,15 +185,15 @@ void submit_batched_n(sync& sync, F&& func, unsigned n, unsigned num_batches_max
     static_assert(std::is_invocable_v<F, unsigned, unsigned, unsigned>, "function must be invocable with batch start, end, and index argument");
     static_assert(std::is_same_v<std::invoke_result_t<F, unsigned, unsigned, unsigned>, void>, "return must be void");
 
-    auto batch_size = detail::int_div_ceil(n, num_batches_max);
-    auto num_batches = detail::int_div_ceil(n, batch_size);
+    auto batch_size = cc::int_div_ceil(n, num_batches_max);
+    auto num_batches = cc::int_div_ceil(n, batch_size);
 
     CC_RUNTIME_ASSERT(num_batches <= num_batches_max && "programmer error");
 
     auto tasks = cc::array<td::container::task>::uninitialized(num_batches);
 
-    for (auto batch = 0u, batchStart = 0u, batchEnd = detail::min(batch_size, n); batch < num_batches;
-         ++batch, batchStart = batch * batch_size, batchEnd = detail::min((batch + 1) * batch_size, n))
+    for (auto batch = 0u, batchStart = 0u, batchEnd = cc::min(batch_size, n); batch < num_batches;
+         ++batch, batchStart = batch * batch_size, batchEnd = cc::min((batch + 1) * batch_size, n))
         tasks[batch].lambda([=] { func(batchStart, batchEnd, batch); });
 
     submit_raw(sync, tasks.data(), num_batches);
@@ -382,20 +299,6 @@ template <class F, class... Args, cc::enable_if<std::is_invocable_v<F, Args...> 
 
 // ==========
 // Sync return variants
-
-[[nodiscard]] inline sync submit_raw(cc::span<container::task> tasks)
-{
-    td::sync res;
-    submit_raw(res, tasks.data(), unsigned(tasks.size()));
-    return res;
-}
-
-[[nodiscard]] inline sync submit_raw(container::task* tasks, unsigned num)
-{
-    td::sync res;
-    submit_raw(res, tasks, num);
-    return res;
-}
 
 template <class F>
 [[nodiscard]] sync submit_n(F&& func, unsigned n)
