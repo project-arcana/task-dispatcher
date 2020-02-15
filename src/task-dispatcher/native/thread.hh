@@ -93,7 +93,7 @@ inline void create_event(event_t* event)
     event->count_waiters = 0;
 }
 
-inline void destroy_event(event_t eventId) { ::CloseHandle(eventId.event); }
+inline void destroy_event(event_t& eventId) { ::CloseHandle(eventId.event); }
 
 inline void wait_for_event(event_t& eventId, uint32_t milliseconds)
 {
@@ -111,7 +111,7 @@ inline void wait_for_event(event_t& eventId, uint32_t milliseconds)
     CC_ASSERT(retval != WAIT_FAILED && prev != 0 && "Failed to wait on native event");
 }
 
-inline void signal_event(event_t eventId) { ::SetEvent(eventId.event); }
+inline void signal_event(event_t& eventId) { ::SetEvent(eventId.event); }
 
 inline void thread_sleep(uint32_t milliseconds) { ::Sleep(milliseconds); }
 
@@ -239,7 +239,7 @@ inline void set_current_thread_affinity(size_t coreAffinity)
 
 inline void create_event(event_t* event) { *event = {PTHREAD_COND_INITIALIZER, PTHREAD_MUTEX_INITIALIZER}; }
 
-inline void destroy_event(event_t /*eventId*/)
+inline void destroy_event(event_t& /*eventId*/)
 {
     // No op
 }
@@ -266,7 +266,7 @@ inline void wait_for_event(event_t& eventId, int64_t milliseconds)
     pthread_mutex_unlock(&eventId.mutex);
 }
 
-inline void signal_event(event_t eventId)
+inline void signal_event(event_t& eventId)
 {
     pthread_mutex_lock(&eventId.mutex);
     pthread_cond_broadcast(&eventId.cond);
