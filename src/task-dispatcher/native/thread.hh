@@ -95,7 +95,8 @@ inline void create_event(event_t* event)
 
 inline void destroy_event(event_t& eventId) { ::CloseHandle(eventId.event); }
 
-inline void wait_for_event(event_t& eventId, uint32_t milliseconds)
+// returns false on timeout
+inline bool wait_for_event(event_t& eventId, uint32_t milliseconds)
 {
     eventId.count_waiters.fetch_add(1U);
 
@@ -109,6 +110,8 @@ inline void wait_for_event(event_t& eventId, uint32_t milliseconds)
     }
 
     CC_ASSERT(retval != WAIT_FAILED && prev != 0 && "Failed to wait on native event");
+
+    return retval != WAIT_TIMEOUT;
 }
 
 inline void signal_event(event_t& eventId) { ::SetEvent(eventId.event); }
@@ -244,12 +247,13 @@ inline void destroy_event(event_t& /*eventId*/)
     // No op
 }
 
-inline void wait_for_event(event_t& eventId, int64_t milliseconds)
+inline bool wait_for_event(event_t& eventId, int64_t milliseconds)
 {
     pthread_mutex_lock(&eventId.mutex);
 
     constexpr int64_t mills_in_sec = 1000;
 
+    bool event_was_signalled = true;
     if (milliseconds == event_wait_infinite)
     {
         pthread_cond_wait(&eventId.cond, &eventId.mutex);
@@ -260,10 +264,12 @@ inline void wait_for_event(event_t& eventId, int64_t milliseconds)
         waittime.tv_sec = milliseconds / mills_in_sec;
         milliseconds -= waittime.tv_sec * mills_in_sec;
         waittime.tv_nsec = milliseconds * mills_in_sec;
-        pthread_cond_timedwait(&eventId.cond, &eventId.mutex, &waittime);
+        auto const wait_res = pthread_cond_timedwait(&eventId.cond, &eventId.mutex, &waittime);
+        event_was_signalled = wait_res != ETIMEDOUT;
     }
 
     pthread_mutex_unlock(&eventId.mutex);
+    return event_was_signalled;
 }
 
 inline void signal_event(event_t& eventId)
