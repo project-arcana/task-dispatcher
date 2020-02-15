@@ -8,6 +8,7 @@
 #include <clean-core/array.hh>
 #include <clean-core/assert.hh>
 #include <clean-core/macros.hh>
+#include <clean-core/utility.hh>
 #include <clean-core/vector.hh>
 
 #include "common/spin_lock.hh"
@@ -31,13 +32,16 @@ namespace
 //      in Scheduler::mTasks
 constexpr bool const gc_use_workstealing = false;
 
-// If true, perform an OS-sleep in worker threads when no tasks are available
-constexpr bool const gc_sleep_if_empty =
-#ifdef TD_NO_SLEEP
-    false;
+// If true, never wait for events and leave worker threads always spinning (minimized latency, cores locked to 100%)
+constexpr bool const gc_never_wait
+#ifdef TD_NO_WAITS
+    = true;
 #else
-    true;
+    = false;
 #endif
+
+// If true, print a warning to stderr if waiting on the work event times out (usually not an error)
+constexpr bool const gc_warn_timeouts = false;
 
 // If true, print a warning to stderr if a deadlock is heuristically detected
 constexpr bool const gc_warn_deadlocks = true;
@@ -231,11 +235,18 @@ struct Scheduler::callback_funcs
         Scheduler* scheduler = static_cast<class td::Scheduler*>(arg_void);
         scheduler->cleanUpPrevFiber();
 
+        constexpr unsigned lc_max_backoff_pauses = 1 << 10;
+        constexpr unsigned lc_min_backoff_pauses = 1;
+        unsigned backoff_num_pauses = lc_min_backoff_pauses;
+
         container::task task;
         while (!scheduler->mIsShuttingDown.load(std::memory_order_relaxed))
         {
             if (scheduler->getNextTask(task))
             {
+                // work available, reset backoff
+                backoff_num_pauses = lc_min_backoff_pauses;
+
                 // Received a task, execute it
                 task.execute_and_cleanup();
 
@@ -244,31 +255,50 @@ struct Scheduler::callback_funcs
             }
             else
             {
-                // Task queue is empty
+                // No tasks available
 
-                if constexpr (gc_sleep_if_empty)
+                if constexpr (gc_never_wait)
                 {
-                    // Sleep to reduce contention
+                    // Immediately retry
 
-                    // This costs a lot, worst case multiple OS scheduler quanta (~7ms each on default Win32)
-                    // Worker wakeup latency can suffer a lot
-                    // However, CPU and power usage is extremely low in the idle case
-
-                    // On Win32, we attempt to increase OS scheduler
-                    // granularity at startup, making this less costly
-
-                    native::thread_sleep(1);
+                    // SSE2 pause instruction
+                    // hints the CPU that this is a spin-wait, improving power usage
+                    // and post-loop wakeup time (falls back to nop on pre-SSE2)
+                    // (not at all OS scheduler related, locks cores at 100%)
+                    _mm_pause();
                 }
                 else
                 {
-                    // SSE2 pause instruction
+                    if (backoff_num_pauses == lc_max_backoff_pauses)
+                    {
+                        // reached max backoff, wait for global event
 
-                    // hints the CPU that this is a spin-wait, improving power usage
-                    // and post-loop wakeup time (falls back to nop on pre-SSE2)
-                    //
-                    // (not at all OS scheduler related, locks cores at 100%)
+                        // wait until the global event is signalled, with timeout
+                        auto const signalled = native::wait_for_event(*scheduler->mEventWorkAvailable, 50);
 
-                    _mm_pause();
+                        if constexpr (gc_warn_timeouts)
+                        {
+                            if (!signalled)
+                            {
+                                std::fprintf(stderr, "[td] Scheduler warning: Work event wait timed out\n");
+                            }
+                        }
+                        else
+                        {
+                            (void)signalled;
+                        }
+                    }
+                    else
+                    {
+                        // increase backoff pauses exponentially
+                        backoff_num_pauses = cc::min(lc_max_backoff_pauses, backoff_num_pauses << 1);
+
+                        // perform pauses
+                        for (auto _ = 0u; _ < backoff_num_pauses; ++_)
+                        {
+                            _mm_pause();
+                        }
+                    }
                 }
             }
         }
@@ -381,8 +411,13 @@ bool td::Scheduler::getNextTask(td::container::task& task)
             else
             {
                 // Received fiber is not cleaned up yet, re-enqueue (very rare)
-                LockGuard lg(local_thread.pinned_resumable_fibers_lock);
-                local_thread.pinned_resumable_fibers.enqueue(resumable_fiber_index);
+                {
+                    LockGuard lg(local_thread.pinned_resumable_fibers_lock);
+                    local_thread.pinned_resumable_fibers.enqueue(resumable_fiber_index);
+                }
+
+                // signal the global event
+                native::signal_event(*mEventWorkAvailable);
             }
             // Fallthrough to global resumables
         }
@@ -403,6 +438,9 @@ bool td::Scheduler::getNextTask(td::container::task& task)
                 // This should only happen if mResumableFibers is almost empty, and
                 // the latency impact is low in those cases
                 mResumableFibers.enqueue(resumable_fiber_index);
+
+                // signal the global event
+                native::signal_event(*mEventWorkAvailable);
             }
             // Fallthrough to global pending Chase-Lev / MPMC
         }
@@ -512,6 +550,7 @@ void td::Scheduler::counterCheckWaitingFibers(td::Scheduler::atomic_counter_t& c
             {
                 // The waiting fiber is not pinned to any thread, store it in the global _resumable fibers
                 bool success = mResumableFibers.enqueue(slot.fiber_index);
+
                 // This should never fail, the container is large enough for all fibers in the system
                 CC_ASSERT(success);
             }
@@ -520,9 +559,13 @@ void td::Scheduler::counterCheckWaitingFibers(td::Scheduler::atomic_counter_t& c
                 // The waiting fiber is pinned to a certain thread, store it there
                 auto& pinned_thread = mThreads[slot.pinned_thread_index];
 
+
                 LockGuard lg(pinned_thread.pinned_resumable_fibers_lock);
                 pinned_thread.pinned_resumable_fibers.enqueue(slot.fiber_index);
             }
+
+            // signal the global event
+            native::signal_event(*mEventWorkAvailable);
 
             // Free the slot
             counter.free_waiting_slots[i].store(true, std::memory_order_release);
@@ -546,14 +589,13 @@ td::Scheduler::Scheduler(scheduler_config const& config)
     mResumableFibers(mFibers.size()), // TODO: Smaller?
     mFreeCounters(config.max_num_counters)
 {
+    mEventWorkAvailable = new native::event_t();
+
     CC_ASSERT(config.is_valid() && "Scheduler config invalid, use scheduler_config_t::validate()");
     CC_ASSERT((config.num_threads <= system::num_logical_cores()) && "More threads than physical cores configured");
 }
 
-td::Scheduler::~Scheduler()
-{
-    // Intentionally left empty
-}
+td::Scheduler::~Scheduler() { delete mEventWorkAvailable; }
 
 void td::Scheduler::submitTasks(td::container::task* tasks, unsigned num_tasks, td::sync& sync)
 {
@@ -587,6 +629,9 @@ void td::Scheduler::submitTasks(td::container::task* tasks, unsigned num_tasks, 
         else
             success &= mTasks.enqueue(tasks[i]);
     }
+
+    // signal the global event
+    native::signal_event(*mEventWorkAvailable);
 
     CC_RUNTIME_ASSERT(success && "Task queue is full, consider increasing config.max_num_tasks");
 }
@@ -639,6 +684,8 @@ void td::Scheduler::start(td::container::task main_task)
     mCounters = cc::fwd_array<atomic_counter_t>::defaulted(mCounters.size());
 
     mIsShuttingDown.store(false, std::memory_order_seq_cst);
+
+    native::create_event(mEventWorkAvailable);
 
     // attempt to make the win32 scheduler as granular as possible for faster Sleep(1)
     bool const applied_win32_sched_change = native::win32_set_scheduler_granular();
@@ -730,12 +777,19 @@ void td::Scheduler::start(td::container::task main_task)
             _mm_pause();
         }
 
+        // wake up all threads
+        native::signal_event(*mEventWorkAvailable);
+
         // Delete the main fiber
         native::delete_main_fiber(s_tls.thread_fiber);
 
         // Join worker threads, starting at 1
         for (auto i = 1u; i < mThreads.size(); ++i)
+        {
+            // re-signal before joining each thread
+            native::signal_event(*mEventWorkAvailable);
             native::join_thread(mThreads[i].native);
+        }
 
         // Clean up
         {
@@ -777,4 +831,6 @@ void td::Scheduler::start(td::container::task main_task)
     // undo the changes made to the win32 scheduler
     if (applied_win32_sched_change)
         native::win32_undo_scheduler_change();
+
+    native::destroy_event(*mEventWorkAvailable);
 }
