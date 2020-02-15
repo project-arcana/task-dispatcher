@@ -380,15 +380,15 @@ bool td::Scheduler::getNextTask(td::container::task& task)
             }
             else
             {
-                // Received fiber is not cleaned up yet, re-enqueue
+                // Received fiber is not cleaned up yet, re-enqueue (very rare)
                 LockGuard lg(local_thread.pinned_resumable_fibers_lock);
                 local_thread.pinned_resumable_fibers.enqueue(resumable_fiber_index);
             }
-            // TODO: Restart or fallthrough?
+            // Fallthrough to global resumables
         }
     }
 
-    // Global fibers
+    // Global resumable fibers
     {
         fiber_index_t resumable_fiber_index;
         if (mResumableFibers.dequeue(resumable_fiber_index))
@@ -399,13 +399,12 @@ bool td::Scheduler::getNextTask(td::container::task& task)
             }
             else
             {
-                // Received fiber is not cleaned up yet, re-enqueue
-                // This should only happen if _resumable_fibers is almost empty, and
+                // Received fiber is not cleaned up yet, re-enqueue (very rare)
+                // This should only happen if mResumableFibers is almost empty, and
                 // the latency impact is low in those cases
-                //            KW_LOG_DIAG("[get_next_task] Acquired resumable fiber " << int(resumable_fiber_index) << ", not cleaned up, re-enqueueing");
                 mResumableFibers.enqueue(resumable_fiber_index);
             }
-            // TODO: Restart or fallthrough?
+            // Fallthrough to global pending Chase-Lev / MPMC
         }
     }
 
