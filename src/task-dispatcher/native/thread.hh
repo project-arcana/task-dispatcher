@@ -38,6 +38,8 @@ struct event_t
     std::atomic_ulong count_waiters;
 };
 
+[[maybe_unused]] constexpr static uint32_t event_wait_infinite = INFINITE;
+
 using thread_start_func_t = uint32_t(__stdcall*)(void* arg);
 #define TD_NATIVE_THREAD_RETURN_TYPE uint32_t
 #define TD_NATIVE_THREAD_FUNC_DECL TD_NATIVE_THREAD_RETURN_TYPE __stdcall
@@ -85,13 +87,13 @@ inline void join_thread(thread_t thread) { ::WaitForSingleObject(thread.handle, 
 
 inline void set_current_thread_affinity(size_t coreAffinity) { ::SetThreadAffinityMask(::GetCurrentThread(), 1ULL << coreAffinity); }
 
-inline void create_native_event(event_t* event)
+inline void create_event(event_t* event)
 {
-    event->event = ::CreateEvent(nullptr, TRUE, FALSE, nullptr);
+    event->event = CreateEvent(nullptr, TRUE, FALSE, nullptr);
     event->count_waiters = 0;
 }
 
-inline void close_event(event_t eventId) { ::CloseHandle(eventId.event); }
+inline void destroy_event(event_t eventId) { ::CloseHandle(eventId.event); }
 
 inline void wait_for_event(event_t& eventId, uint32_t milliseconds)
 {
@@ -112,6 +114,7 @@ inline void wait_for_event(event_t& eventId, uint32_t milliseconds)
 inline void signal_event(event_t eventId) { ::SetEvent(eventId.event); }
 
 inline void thread_sleep(uint32_t milliseconds) { ::Sleep(milliseconds); }
+
 #else
 struct thread_t
 {
@@ -123,7 +126,8 @@ struct event_t
     pthread_cond_t cond;
     pthread_mutex_t mutex;
 };
-constexpr static uint32_t event_wait_infinite = uint32_t(-1);
+
+[[maybe_unused]] constexpr static uint32_t event_wait_infinite = uint32_t(-1);
 
 using thread_start_func_t = void* (*)(void* arg);
 #define TD_NATIVE_THREAD_RETURN_TYPE void*
@@ -233,9 +237,9 @@ inline void set_current_thread_affinity(size_t coreAffinity)
 #endif
 }
 
-inline void create_native_event(event_t* event) { *event = {PTHREAD_COND_INITIALIZER, PTHREAD_MUTEX_INITIALIZER}; }
+inline void create_event(event_t* event) { *event = {PTHREAD_COND_INITIALIZER, PTHREAD_MUTEX_INITIALIZER}; }
 
-inline void close_event(event_t /*eventId*/)
+inline void destroy_event(event_t /*eventId*/)
 {
     // No op
 }

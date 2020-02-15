@@ -642,7 +642,8 @@ void td::Scheduler::start(td::container::task main_task)
 
     mIsShuttingDown.store(false, std::memory_order_seq_cst);
 
-    native::maximize_os_scheduler_granularity();
+    // attempt to make the win32 scheduler as granular as possible for faster Sleep(1)
+    bool const applied_win32_sched_change = native::win32_set_scheduler_granular();
 
     // Initialize main thread variables, create the thread fiber
     // The main thread is thread 0 by convention
@@ -774,4 +775,8 @@ void td::Scheduler::start(td::container::task main_task)
             sCurrentScheduler = nullptr;
         }
     }
+
+    // undo the changes made to the win32 scheduler
+    if (applied_win32_sched_change)
+        native::win32_undo_scheduler_change();
 }
