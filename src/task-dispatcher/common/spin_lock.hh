@@ -4,29 +4,37 @@
 
 #include <immintrin.h>
 
+#include <clean-core/macros.hh>
+
 namespace td
 {
-// Simple spinlock, fullfills BasicLockable named requirement
-// can be used with std::lock_guard
+// test-and-test-and-set spinlock with SSE2 PAUSE
 struct SpinLock
 {
 public:
     SpinLock() = default;
     ~SpinLock() = default;
 
-    void lock()
+    CC_FORCE_INLINE void lock()
     {
-        // acquire and spin
-        while (mFlag.test_and_set(std::memory_order_acquire))
+        do
+        {
+            wait_until_unlocked();
+        } while (mIsLocked.exchange(true, std::memory_order_acquire) == true);
+    }
+
+    CC_FORCE_INLINE void wait_until_unlocked()
+    {
+        while (mIsLocked.load(std::memory_order_relaxed) == true)
         {
             _mm_pause();
         }
     }
 
-    void unlock()
+    CC_FORCE_INLINE void unlock()
     {
         // release
-        mFlag.clear(std::memory_order_release);
+        mIsLocked.store(false, std::memory_order_release);
     }
 
     SpinLock(SpinLock const& other) = delete;
@@ -35,15 +43,15 @@ public:
     SpinLock& operator=(SpinLock&& other) noexcept = delete;
 
 private:
-    std::atomic_flag mFlag;
+    std::atomic_bool mIsLocked;
 };
 
 template <typename T>
 class LockGuard
 {
 public:
-    explicit LockGuard(T& mutex) : mMutex(mutex) { mMutex.lock(); }
-    ~LockGuard() { mMutex.unlock(); }
+    CC_FORCE_INLINE explicit LockGuard(T& mutex) : mMutex(mutex) { mMutex.lock(); }
+    CC_FORCE_INLINE ~LockGuard() { mMutex.unlock(); }
 
     LockGuard(const LockGuard&) = delete;
     LockGuard(LockGuard&& other) noexcept = delete;

@@ -250,13 +250,12 @@ struct Scheduler::callback_funcs
                 {
                     // Sleep to reduce contention
 
-                    // This is in most cases a context switch,
-                    // and can cost multiple OS scheduler time slices (of usually >5ms each)
-                    // As such, worker wakeup latency is rather high (multiple milliseconds)
+                    // This costs a lot, worst case multiple OS scheduler quanta (~7ms each on default Win32)
+                    // Worker wakeup latency can suffer a lot
                     // However, CPU and power usage is extremely low in the idle case
-                    //
+
                     // On Win32, we attempt to increase OS scheduler
-                    // granularity to 1ms at startup, making this less costly
+                    // granularity at startup, making this less costly
 
                     native::thread_sleep(1);
                 }
@@ -267,7 +266,7 @@ struct Scheduler::callback_funcs
                     // hints the CPU that this is a spin-wait, improving power usage
                     // and post-loop wakeup time (falls back to nop on pre-SSE2)
                     //
-                    // (not at all OS scheduler related, and CPU usage is still 100%)
+                    // (not at all OS scheduler related, locks cores at 100%)
 
                     _mm_pause();
                 }
