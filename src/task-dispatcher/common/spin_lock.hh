@@ -43,7 +43,7 @@ public:
     SpinLock& operator=(SpinLock&& other) noexcept = delete;
 
 private:
-    std::atomic_bool mIsLocked;
+    std::atomic_bool mIsLocked = {false};
 };
 
 template <typename T>
