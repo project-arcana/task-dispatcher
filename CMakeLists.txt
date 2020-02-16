@@ -19,8 +19,8 @@ option(TD_ENABLE_UNITY_BUILD "If enabled, compiles this library as a single comp
 file(GLOB_RECURSE SOURCES "src/*.cc")
 file(GLOB_RECURSE HEADERS "src/*.hh")
 
-source_group(TREE "${CMAKE_CURRENT_SOURCE_DIR}/src" FILES ${SOURCES})
-source_group(TREE "${CMAKE_CURRENT_SOURCE_DIR}/src" FILES ${HEADERS})
+source_group("${CMAKE_CURRENT_SOURCE_DIR}/src" FILES ${SOURCES})
+source_group("${CMAKE_CURRENT_SOURCE_DIR}/src" FILES ${HEADERS})
 
 if (TD_ENABLE_UNITY_BUILD)
     enable_unity_build(task-dispatcher SOURCES 50 cc)
