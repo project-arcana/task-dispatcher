@@ -20,8 +20,7 @@ option(TD_ENABLE_UNITY_BUILD "If enabled, compiles this library as a single comp
 file(GLOB_RECURSE SOURCES "src/*.cc")
 file(GLOB_RECURSE HEADERS "src/*.hh")
 
-arcana_source_group(SOURCES)
-arcana_source_group(HEADERS)
+arcana_source_group(SOURCES HEADERS)
 
 if (TD_ENABLE_UNITY_BUILD)
     arcana_enable_unity_build(task-dispatcher SOURCES 50 cc)
