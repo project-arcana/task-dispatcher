@@ -17,6 +17,7 @@ namespace native
 {
 struct thread_t;
 struct fiber_t;
+struct event_t;
 }
 
 struct scheduler_config
@@ -102,11 +103,13 @@ private:
     static auto constexpr max_handles_in_flight = 512;
     container::VersionRing<counter_index_t, max_handles_in_flight> mCounterHandles;
 
+    // Worker wakeup event
+    native::event_t* mEventWorkAvailable;
+
 private:
     // Callbacks, wrapped into a friend struct for member access
     struct callback_funcs;
     friend struct callback_funcs;
-    friend struct scheduler_config;
 
 private:
     fiber_index_t acquireFreeFiber();
