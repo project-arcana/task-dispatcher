@@ -6,6 +6,15 @@
 
 #include <clean-core/native/win32_sanitized.hh>
 
+extern "C"
+{
+    DECLSPEC_IMPORT
+    UINT WINAPI timeBeginPeriod(_In_ UINT uPeriod);
+
+    DECLSPEC_IMPORT
+    UINT WINAPI timeEndPeriod(_In_ UINT uPeriod);
+};
+
 bool td::native::win32_set_scheduler_granular()
 {
     // Barely documented behavior of timeBeginPeriod,
@@ -18,7 +27,7 @@ bool td::native::win32_set_scheduler_granular()
     // This change is global and should be undone at shutdown
     // It should not be called often (ideally just once)
 
-    return ::timeBeginPeriod(1) == TIMERR_NOERROR;
+    return ::timeBeginPeriod(1) == 0 /*TIMERR_NOERROR*/;
 }
 
 bool td::native::win32_undo_scheduler_change()
@@ -26,7 +35,7 @@ bool td::native::win32_undo_scheduler_change()
     // Undos the change to the OS scheduler, the "period" specified must
     // be the same as in the first call
 
-    return ::timeEndPeriod(1) == TIMERR_NOERROR;
+    return ::timeEndPeriod(1) == 0 /*TIMERR_NOERROR*/;
 }
 
 #else
