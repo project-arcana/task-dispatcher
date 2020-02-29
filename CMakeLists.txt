@@ -4,11 +4,14 @@ project(task-dispatcher)
 set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 
 include(cmake/UnityBuild.cmake)
+include(cmake/SourceGroup.cmake)
 
 # =========================================
 # options
 
 option(TD_ALLOW_HEAP_TASKS "If enabled, automatically create heap-allocated tasks for lambdas exceeding cacheline size" OFF)
+option(TD_NO_WAITS "If enabled, worker threads do not wait/sleep when idle, minimizing latency and maximizing throughput at the cost of CPU usage" OFF)
+
 option(TD_ENABLE_UNITY_BUILD "If enabled, compiles this library as a single compilation unit" ON)
 
 # =========================================
@@ -17,11 +20,10 @@ option(TD_ENABLE_UNITY_BUILD "If enabled, compiles this library as a single comp
 file(GLOB_RECURSE SOURCES "src/*.cc")
 file(GLOB_RECURSE HEADERS "src/*.hh")
 
-source_group(TREE "${CMAKE_CURRENT_SOURCE_DIR}/src" FILES ${SOURCES})
-source_group(TREE "${CMAKE_CURRENT_SOURCE_DIR}/src" FILES ${HEADERS})
+arcana_source_group(SOURCES HEADERS)
 
 if (TD_ENABLE_UNITY_BUILD)
-    enable_unity_build(task-dispatcher SOURCES 50 cc)
+    arcana_enable_unity_build(task-dispatcher SOURCES 50 cc)
 endif()
 
 add_library(task-dispatcher STATIC ${SOURCES} ${HEADERS})
@@ -30,6 +32,10 @@ target_link_libraries(task-dispatcher PUBLIC clean-core)
 
 if (TD_ALLOW_HEAP_TASKS)
     target_compile_definitions(task-dispatcher PUBLIC TD_ALLOW_HEAP_TASKS)
+endif()
+
+if (TD_NO_WAITS)
+    target_compile_definitions(task-dispatcher PUBLIC TD_NO_WAITS)
 endif()
 
 # =========================================
@@ -42,7 +48,11 @@ if(NOT CMAKE_BUILD_TYPE)
 endif()
 
 if (MSVC)
+    # /GT: fiber-safe optimizations
     target_compile_options(task-dispatcher PUBLIC /MP /GT)
+
+    # Winmm.lib for timeapi.h usage (timeBeginPeriod)
+    target_link_libraries(task-dispatcher PRIVATE "Winmm.lib")
 else()
     # Pthread
     set(THREADS_PREFER_PTHREAD_FLAG ON)

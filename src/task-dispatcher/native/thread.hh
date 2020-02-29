@@ -38,6 +38,8 @@ struct event_t
     std::atomic_ulong count_waiters;
 };
 
+[[maybe_unused]] constexpr static uint32_t event_wait_infinite = INFINITE;
+
 using thread_start_func_t = uint32_t(__stdcall*)(void* arg);
 #define TD_NATIVE_THREAD_RETURN_TYPE uint32_t
 #define TD_NATIVE_THREAD_FUNC_DECL TD_NATIVE_THREAD_RETURN_TYPE __stdcall
@@ -49,7 +51,7 @@ inline bool create_thread(size_t stack_size, thread_start_func_t start_routine, 
     auto const handle = reinterpret_cast<::HANDLE>(::_beginthreadex(nullptr, unsigned(stack_size), start_routine, arg, 0U, nullptr));
     return_thread->handle = handle;
 
-    if (handle != 0)
+    if (handle != nullptr)
     {
         return_thread->id = ::GetThreadId(handle);
     }
@@ -85,15 +87,16 @@ inline void join_thread(thread_t thread) { ::WaitForSingleObject(thread.handle, 
 
 inline void set_current_thread_affinity(size_t coreAffinity) { ::SetThreadAffinityMask(::GetCurrentThread(), 1ULL << coreAffinity); }
 
-inline void create_native_event(event_t* event)
+inline void create_event(event_t* event)
 {
-    event->event = ::CreateEvent(nullptr, TRUE, FALSE, nullptr);
+    event->event = CreateEvent(nullptr, TRUE, FALSE, nullptr);
     event->count_waiters = 0;
 }
 
-inline void close_event(event_t eventId) { ::CloseHandle(eventId.event); }
+inline void destroy_event(event_t& eventId) { ::CloseHandle(eventId.event); }
 
-inline void wait_for_event(event_t& eventId, uint32_t milliseconds)
+// returns false on timeout
+inline bool wait_for_event(event_t& eventId, uint32_t milliseconds)
 {
     eventId.count_waiters.fetch_add(1U);
 
@@ -107,11 +110,14 @@ inline void wait_for_event(event_t& eventId, uint32_t milliseconds)
     }
 
     CC_ASSERT(retval != WAIT_FAILED && prev != 0 && "Failed to wait on native event");
+
+    return retval != WAIT_TIMEOUT;
 }
 
-inline void signal_event(event_t eventId) { ::SetEvent(eventId.event); }
+inline void signal_event(event_t& eventId) { ::SetEvent(eventId.event); }
 
 inline void thread_sleep(uint32_t milliseconds) { ::Sleep(milliseconds); }
+
 #else
 struct thread_t
 {
@@ -123,7 +129,8 @@ struct event_t
     pthread_cond_t cond;
     pthread_mutex_t mutex;
 };
-constexpr static uint32_t event_wait_infinite = uint32_t(-1);
+
+[[maybe_unused]] constexpr static uint32_t event_wait_infinite = uint32_t(-1);
 
 using thread_start_func_t = void* (*)(void* arg);
 #define TD_NATIVE_THREAD_RETURN_TYPE void*
@@ -233,19 +240,20 @@ inline void set_current_thread_affinity(size_t coreAffinity)
 #endif
 }
 
-inline void create_native_event(event_t* event) { *event = {PTHREAD_COND_INITIALIZER, PTHREAD_MUTEX_INITIALIZER}; }
+inline void create_event(event_t* event) { *event = {PTHREAD_COND_INITIALIZER, PTHREAD_MUTEX_INITIALIZER}; }
 
-inline void close_event(event_t /*eventId*/)
+inline void destroy_event(event_t& /*eventId*/)
 {
     // No op
 }
 
-inline void wait_for_event(event_t& eventId, int64_t milliseconds)
+inline bool wait_for_event(event_t& eventId, int64_t milliseconds)
 {
     pthread_mutex_lock(&eventId.mutex);
 
     constexpr int64_t mills_in_sec = 1000;
 
+    bool event_was_signalled = true;
     if (milliseconds == event_wait_infinite)
     {
         pthread_cond_wait(&eventId.cond, &eventId.mutex);
@@ -256,13 +264,15 @@ inline void wait_for_event(event_t& eventId, int64_t milliseconds)
         waittime.tv_sec = milliseconds / mills_in_sec;
         milliseconds -= waittime.tv_sec * mills_in_sec;
         waittime.tv_nsec = milliseconds * mills_in_sec;
-        pthread_cond_timedwait(&eventId.cond, &eventId.mutex, &waittime);
+        auto const wait_res = pthread_cond_timedwait(&eventId.cond, &eventId.mutex, &waittime);
+        event_was_signalled = wait_res != ETIMEDOUT;
     }
 
     pthread_mutex_unlock(&eventId.mutex);
+    return event_was_signalled;
 }
 
-inline void signal_event(event_t eventId)
+inline void signal_event(event_t& eventId)
 {
     pthread_mutex_lock(&eventId.mutex);
     pthread_cond_broadcast(&eventId.cond);
