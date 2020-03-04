@@ -30,7 +30,16 @@ inline uint32_t bsr(uint64_t v)
 #endif
 }
 
-inline uint64_t rdtsc() { return __rdtsc(); }
+inline uint64_t rdtsc()
+{
+#if defined(__GNUC__) && !defined(__clang__)
+    unsigned int lo, hi;
+    __asm__ __volatile__("rdtsc" : "=a"(lo), "=d"(hi));
+    return ((uint64_t)hi << 32) | lo;
+#else
+    return __rdtsc();
+#endif
+}
 }
 
 namespace td::math
