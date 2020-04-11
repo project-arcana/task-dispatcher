@@ -2,8 +2,8 @@
 
 #include <cstddef>
 
-#include <clean-core/assert.hh>
 #include <clean-core/array.hh>
+#include <clean-core/assert.hh>
 
 namespace td::container
 {
