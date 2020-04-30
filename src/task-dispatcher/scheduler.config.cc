@@ -1,12 +1,12 @@
 #include "scheduler.hh"
 
-#include <task-dispatcher/common/math_intrin.hh>
+#include <clean-core/bits.hh>
 
 void td::scheduler_config::ceil_to_pow2()
 {
-    num_fibers = math::nextpow2(num_fibers);
-    max_num_counters = math::nextpow2(max_num_counters);
-    max_num_tasks = math::nextpow2(max_num_tasks);
+    num_fibers = cc::ceil_pow2(num_fibers);
+    max_num_counters = cc::ceil_pow2(max_num_counters);
+    max_num_tasks = cc::ceil_pow2(max_num_tasks);
 }
 
 bool td::scheduler_config::is_valid() const
@@ -22,9 +22,9 @@ bool td::scheduler_config::is_valid() const
     valid &= is_positive(max_num_tasks);
 
     // Powers of 2
-    valid &= math::ispow2(num_fibers);
-    valid &= math::ispow2(max_num_counters);
-    valid &= math::ispow2(max_num_tasks);
+    valid &= cc::is_pow2(num_fibers);
+    valid &= cc::is_pow2(max_num_counters);
+    valid &= cc::is_pow2(max_num_tasks);
 
     // Valid number of fibers, threads and counters
     valid &= bool(num_fibers < Scheduler::invalid_fiber);
