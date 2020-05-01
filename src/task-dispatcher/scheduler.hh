@@ -66,7 +66,7 @@ public:
     // Returns true if called from inside the scheduler
     [[nodiscard]] static bool isInsideScheduler() { return sCurrentScheduler != nullptr; }
 
-    [[nodiscard]] size_t getNumThreads() const { return mThreads.size(); }
+    [[nodiscard]] unsigned getNumThreads() const { return unsigned(mThreads.size()); }
 
 private:
     static thread_local Scheduler* sCurrentScheduler;

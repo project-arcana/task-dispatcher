@@ -44,7 +44,7 @@ void wait_for_unpinned(STs&... syncs)
 [[nodiscard]] inline bool is_scheduler_alive() { return Scheduler::isInsideScheduler(); }
 
 /// returns the amount of threads the current scheduler has, only call if is_scheduler_alive() == true
-[[nodiscard]] inline size_t get_current_num_threads() { return Scheduler::current().getNumThreads(); }
+[[nodiscard]] inline unsigned get_current_num_threads() { return Scheduler::current().getNumThreads(); }
 
 
 // ==========
