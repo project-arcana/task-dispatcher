@@ -53,20 +53,24 @@ public:
     explicit Scheduler(scheduler_config const& config = scheduler_config());
     ~Scheduler();
 
-    // Launch the scheduler with the given main task
+    /// Launch the scheduler with the given main task
     void start(container::task main_task);
 
-    // Enqueue the given tasks and associate them with a sync object
+    /// Enqueue the given tasks and associate them with a sync object
     void submitTasks(container::task* tasks, unsigned num_tasks, td::sync& sync);
-    // Resume execution after the given sync object has reached a set target
+    /// Resume execution after the given sync object has reached a set target
     void wait(td::sync& sync, bool pinnned = false, int target = 0);
 
-    // The scheduler running the current task
-    [[nodiscard]] static Scheduler& current() { return *sCurrentScheduler; }
-    // Returns true if called from inside the scheduler
-    [[nodiscard]] static bool isInsideScheduler() { return sCurrentScheduler != nullptr; }
-
+    /// Returns the amount of threads this scheduler controls
     [[nodiscard]] unsigned getNumThreads() const { return unsigned(mThreads.size()); }
+
+    /// Returns the scheduler running the current task
+    [[nodiscard]] static Scheduler& current() { return *sCurrentScheduler; }
+    /// Returns true if called from inside the scheduler
+    [[nodiscard]] static bool isInsideScheduler() { return sCurrentScheduler != nullptr; }
+    /// Returns the index of the calling thread, relative to its owning scheduler. returns unsigned(-1) on unowned threads
+    [[nodiscard]] static unsigned getThreadIndex();
+
 
 private:
     static thread_local Scheduler* sCurrentScheduler;

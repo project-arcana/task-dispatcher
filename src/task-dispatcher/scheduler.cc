@@ -11,6 +11,10 @@
 #include <clean-core/utility.hh>
 #include <clean-core/vector.hh>
 
+#ifdef TD_HAS_RICH_LOG
+#include <rich-log/logger.hh>
+#endif
+
 #include "common/spin_lock.hh"
 #include "container/mpsc_queue.hh"
 #include "container/spmc_queue.hh"
@@ -206,6 +210,10 @@ struct Scheduler::callback_funcs
 
         s_tls.reset();
         s_tls.thread_index = worker_arg->index;
+
+#ifdef TD_HAS_RICH_LOG
+        rlog::set_current_thread_name("td#%u", worker_arg->index);
+#endif
 
         // Set up chase lev deques
         if constexpr (gc_use_workstealing)
@@ -676,6 +684,8 @@ void td::Scheduler::wait(td::sync& sync, bool pinnned, int target)
     }
 }
 
+unsigned td::Scheduler::getThreadIndex() { return s_tls.thread_index; }
+
 void td::Scheduler::start(td::container::task main_task)
 {
     // Re-default all arrays, as multiple starts are possible
@@ -689,6 +699,11 @@ void td::Scheduler::start(td::container::task main_task)
 
     // attempt to make the win32 scheduler as granular as possible for faster Sleep(1)
     bool const applied_win32_sched_change = native::win32_set_scheduler_granular();
+
+#ifdef TD_HAS_RICH_LOG
+    // always enable win32 colors in rich-log
+    rlog::enable_win32_colors();
+#endif
 
     // Initialize main thread variables, create the thread fiber
     // The main thread is thread 0 by convention
@@ -704,7 +719,9 @@ void td::Scheduler::start(td::container::task main_task)
         // Create main fiber on this thread
         native::create_main_fiber(s_tls.thread_fiber);
 
-        //        kw::dev::log::set_current_thread_index(0);
+#ifdef TD_HAS_RICH_LOG
+        rlog::set_current_thread_name("td#0");
+#endif
     }
 
     // Populate fiber pool

@@ -33,6 +33,13 @@ if (TD_NO_WAITS)
     target_compile_definitions(task-dispatcher PUBLIC TD_NO_WAITS)
 endif()
 
+# optional dependency on rich-log
+if (TARGET rich-log)
+    target_link_libraries(task-dispatcher PUBLIC rich-log)
+    target_compile_definitions(task-dispatcher PUBLIC TD_HAS_RICH_LOG)
+    message(STATUS "[task dispatcher] rich-log integration enabled")
+endif()
+
 # =========================================
 # set up compile flags
 
