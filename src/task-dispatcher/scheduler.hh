@@ -65,11 +65,13 @@ public:
     [[nodiscard]] unsigned getNumThreads() const { return unsigned(mThreads.size()); }
 
     /// Returns the scheduler running the current task
-    [[nodiscard]] static Scheduler& current() { return *sCurrentScheduler; }
+    [[nodiscard]] static Scheduler& Current() { return *sCurrentScheduler; }
     /// Returns true if called from inside the scheduler
-    [[nodiscard]] static bool isInsideScheduler() { return sCurrentScheduler != nullptr; }
+    [[nodiscard]] static bool IsInsideScheduler() { return sCurrentScheduler != nullptr; }
     /// Returns the index of the calling thread, relative to its owning scheduler. returns unsigned(-1) on unowned threads
-    [[nodiscard]] static unsigned getThreadIndex();
+    [[nodiscard]] static unsigned CurrentThreadIndex();
+    /// Returns the index of the calling fiber, relative to its owning scheduler. returns unsigned(-1) on unowned threads
+    [[nodiscard]] static unsigned CurrentFiberIndex();
 
 
 private:

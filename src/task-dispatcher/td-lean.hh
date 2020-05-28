@@ -22,30 +22,35 @@ namespace td
 // ==========
 // Wait
 
-inline void wait_for(sync& sync) { Scheduler::current().wait(sync, true, 0); }
-inline void wait_for_unpinned(sync& sync) { Scheduler::current().wait(sync, false, 0); }
+inline void wait_for(sync& sync) { Scheduler::Current().wait(sync, true, 0); }
+inline void wait_for_unpinned(sync& sync) { Scheduler::Current().wait(sync, false, 0); }
 
 template <class... STs>
 void wait_for(STs&... syncs)
 {
-    (Scheduler::current().wait(syncs, true, 0), ...);
+    (Scheduler::Current().wait(syncs, true, 0), ...);
 }
 
 template <class... STs>
 void wait_for_unpinned(STs&... syncs)
 {
-    (Scheduler::current().wait(syncs, false, 0), ...);
+    (Scheduler::Current().wait(syncs, false, 0), ...);
 }
 
 // ==========
 // Getter / Miscellaneous
 
 /// returns true if the call is being made from within a scheduler
-[[nodiscard]] inline bool is_scheduler_alive() { return Scheduler::isInsideScheduler(); }
+[[nodiscard]] inline bool is_scheduler_alive() { return Scheduler::IsInsideScheduler(); }
 
 /// returns the amount of threads the current scheduler has, only call if is_scheduler_alive() == true
-[[nodiscard]] inline unsigned get_current_num_threads() { return Scheduler::current().getNumThreads(); }
+[[nodiscard]] inline unsigned get_current_num_threads() { return Scheduler::Current().getNumThreads(); }
 
+/// returns the index of the current thread, or unsigned(-1) on unowned threads
+[[nodiscard]] inline unsigned current_thread_id() { return Scheduler::CurrentThreadIndex(); }
+
+/// returns the index of the current fiber, or unsigned(-1) on unowned threads
+[[nodiscard]] inline unsigned current_fiber_id() { return Scheduler::CurrentFiberIndex(); }
 
 // ==========
 // Launch
@@ -89,7 +94,7 @@ void launch_singlethreaded(F&& func)
 // Submit
 
 // Raw submit from constructed Task types
-inline void submit_raw(sync& sync, container::task* tasks, unsigned num) { td::Scheduler::current().submitTasks(tasks, num, sync); }
+inline void submit_raw(sync& sync, container::task* tasks, unsigned num) { td::Scheduler::Current().submitTasks(tasks, num, sync); }
 inline void submit_raw(sync& sync, cc::span<container::task> tasks) { submit_raw(sync, tasks.data(), unsigned(tasks.size())); }
 
 

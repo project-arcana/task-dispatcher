@@ -684,7 +684,8 @@ void td::Scheduler::wait(td::sync& sync, bool pinnned, int target)
     }
 }
 
-unsigned td::Scheduler::getThreadIndex() { return s_tls.thread_index; }
+unsigned td::Scheduler::CurrentThreadIndex() { return s_tls.thread_index; }
+unsigned td::Scheduler::CurrentFiberIndex() { return s_tls.current_fiber_index; }
 
 void td::Scheduler::start(td::container::task main_task)
 {
