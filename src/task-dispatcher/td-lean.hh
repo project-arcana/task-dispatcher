@@ -94,7 +94,12 @@ void launch_singlethreaded(F&& func)
 // Submit
 
 // Raw submit from constructed Task types
-inline void submit_raw(sync& sync, container::task* tasks, unsigned num) { td::Scheduler::Current().submitTasks(tasks, num, sync); }
+inline void submit_raw(sync& sync, container::task* tasks, unsigned num)
+{
+    CC_ASSERT(td::is_scheduler_alive() && "attempted submit outside of live scheduler");
+    td::Scheduler::Current().submitTasks(tasks, num, sync);
+}
+
 inline void submit_raw(sync& sync, cc::span<container::task> tasks) { submit_raw(sync, tasks.data(), unsigned(tasks.size())); }
 
 
