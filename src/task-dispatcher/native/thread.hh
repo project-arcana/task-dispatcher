@@ -8,8 +8,6 @@
 
 #ifdef CC_OS_WINDOWS
 
-#include <atomic>
-
 #include <process.h>
 #include <clean-core/native/win32_sanitized.hh>
 
@@ -34,8 +32,8 @@ struct thread_t
 
 struct event_t
 {
-    ::HANDLE event;
-    std::atomic_ulong count_waiters;
+    ::CONDITION_VARIABLE cv;
+    ::CRITICAL_SECTION crit_sec;
 };
 
 [[maybe_unused]] constexpr static uint32_t event_wait_infinite = INFINITE;
@@ -89,32 +87,23 @@ inline void set_current_thread_affinity(size_t coreAffinity) { ::SetThreadAffini
 
 inline void create_event(event_t* event)
 {
-    event->event = CreateEvent(nullptr, TRUE, FALSE, nullptr);
-    event->count_waiters = 0;
+    ::InitializeConditionVariable(&event->cv);
+    ::InitializeCriticalSection(&event->crit_sec);
 }
 
-inline void destroy_event(event_t& eventId) { ::CloseHandle(eventId.event); }
+inline void destroy_event(event_t& eventId) { ::DeleteCriticalSection(&eventId.crit_sec); }
 
 // returns false on timeout
 inline bool wait_for_event(event_t& eventId, uint32_t milliseconds)
 {
-    eventId.count_waiters.fetch_add(1U);
-
-    ::DWORD const retval = ::WaitForSingleObject(eventId.event, milliseconds);
-    uint32_t const prev = eventId.count_waiters.fetch_sub(1U);
-
-    if (prev == 1)
-    {
-        // we were the last to awaken, so reset event.
-        ::ResetEvent(eventId.event);
-    }
-
-    CC_ASSERT(retval != WAIT_FAILED && prev != 0 && "Failed to wait on native event");
-
-    return retval != WAIT_TIMEOUT;
+    ::EnterCriticalSection(&eventId.crit_sec);
+    ::BOOL const retval = ::SleepConditionVariableCS(&eventId.cv, &eventId.crit_sec, milliseconds);
+    CC_ASSERT(retval ? true : GetLastError() == ERROR_TIMEOUT && "Failed to wait on native CV");
+    ::LeaveCriticalSection(&eventId.crit_sec);
+    return bool(retval);
 }
 
-inline void signal_event(event_t& eventId) { ::SetEvent(eventId.event); }
+inline void signal_event(event_t& eventId) { ::WakeAllConditionVariable(&eventId.cv); }
 
 inline void thread_sleep(uint32_t milliseconds) { ::Sleep(milliseconds); }
 
