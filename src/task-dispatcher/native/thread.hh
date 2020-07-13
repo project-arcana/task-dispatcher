@@ -8,8 +8,6 @@
 
 #ifdef CC_OS_WINDOWS
 
-#include <atomic>
-
 #include <process.h>
 #include <clean-core/native/win32_sanitized.hh>
 
@@ -36,8 +34,6 @@ struct event_t
 {
     ::CONDITION_VARIABLE cv;
     ::CRITICAL_SECTION crit_sec;
-    //    ::HANDLE event;
-    //    std::atomic_ulong count_waiters;
 };
 
 [[maybe_unused]] constexpr static uint32_t event_wait_infinite = INFINITE;
@@ -93,15 +89,9 @@ inline void create_event(event_t* event)
 {
     ::InitializeConditionVariable(&event->cv);
     ::InitializeCriticalSection(&event->crit_sec);
-    //    event->event = CreateEvent(nullptr, TRUE, FALSE, TEXT("td native::event_t"));
-    //    event->count_waiters = 0;
 }
 
-inline void destroy_event(event_t& eventId)
-{
-    ::DeleteCriticalSection(&eventId.crit_sec);
-    //    ::CloseHandle(eventId.event);
-}
+inline void destroy_event(event_t& eventId) { ::DeleteCriticalSection(&eventId.crit_sec); }
 
 // returns false on timeout
 inline bool wait_for_event(event_t& eventId, uint32_t milliseconds)
@@ -110,30 +100,10 @@ inline bool wait_for_event(event_t& eventId, uint32_t milliseconds)
     ::BOOL const retval = ::SleepConditionVariableCS(&eventId.cv, &eventId.crit_sec, milliseconds);
     CC_ASSERT(retval ? true : GetLastError() == ERROR_TIMEOUT && "Failed to wait on native CV");
     ::LeaveCriticalSection(&eventId.crit_sec);
-
     return bool(retval);
-
-    //    eventId.count_waiters.fetch_add(1U);
-
-    //    ::DWORD const retval = ::WaitForSingleObject(eventId.event, milliseconds);
-    //    uint32_t const prev = eventId.count_waiters.fetch_sub(1U);
-
-    //  if (prev == 1)
-    //   {
-    // we were the last to awaken, so reset event.
-    //       ::ResetEvent(eventId.event);
-    //   }
-
-    //    CC_ASSERT(retval != WAIT_FAILED && prev != 0 && "Failed to wait on native event");
-    //    return retval != WAIT_TIMEOUT;
 }
 
-inline void signal_event(event_t& eventId)
-{
-    ::WakeAllConditionVariable(&eventId.cv);
-    //    ::BOOL retval = ::SetEvent(eventId.event);
-    //    CC_ASSERT(!!retval && "failed to signal event");
-}
+inline void signal_event(event_t& eventId) { ::WakeAllConditionVariable(&eventId.cv); }
 
 inline void thread_sleep(uint32_t milliseconds) { ::Sleep(milliseconds); }
 
