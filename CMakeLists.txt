@@ -46,9 +46,6 @@ endif()
 if (MSVC)
     # /GT: fiber-safe optimizations
     target_compile_options(task-dispatcher PUBLIC /GT)
-
-    # Winmm.lib for timeapi.h usage (timeBeginPeriod)
-    target_link_libraries(task-dispatcher PRIVATE "Winmm.lib")
 else()
     # Pthread
     set(THREADS_PREFER_PTHREAD_FLAG ON)

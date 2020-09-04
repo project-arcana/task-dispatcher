@@ -4,12 +4,15 @@
 
 #include <immintrin.h>
 
+#include <clean-core/native/win32_util.hh>
+
 #include <clean-core/allocate.hh>
 #include <clean-core/array.hh>
 #include <clean-core/assert.hh>
 #include <clean-core/macros.hh>
 #include <clean-core/utility.hh>
 #include <clean-core/vector.hh>
+
 
 #ifdef TD_HAS_RICH_LOG
 #include <rich-log/logger.hh>
@@ -20,7 +23,6 @@
 #include "container/spmc_queue.hh"
 #include "native/fiber.hh"
 #include "native/thread.hh"
-#include "native/util.hh"
 
 namespace
 {
@@ -699,11 +701,11 @@ void td::Scheduler::start(td::container::task main_task)
     native::create_event(mEventWorkAvailable);
 
     // attempt to make the win32 scheduler as granular as possible for faster Sleep(1)
-    bool const applied_win32_sched_change = native::win32_set_scheduler_granular();
+    bool const applied_win32_sched_change = cc::win32_enable_schedular_granular();
 
 #ifdef TD_HAS_RICH_LOG
-    // always enable win32 colors in rich-log
-    rlog::enable_win32_colors();
+    // always enable win32 colors for rich-log
+    cc::win32_enable_console_colors();
 #endif
 
     // Initialize main thread variables, create the thread fiber
@@ -848,7 +850,7 @@ void td::Scheduler::start(td::container::task main_task)
 
     // undo the changes made to the win32 scheduler
     if (applied_win32_sched_change)
-        native::win32_undo_scheduler_change();
+        cc::win32_disable_scheduler_granular();
 
     native::destroy_event(*mEventWorkAvailable);
 }
