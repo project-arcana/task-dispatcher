@@ -11,6 +11,7 @@
 #include <clean-core/utility.hh>
 #include <clean-core/vector.hh>
 
+
 #ifdef TD_HAS_RICH_LOG
 #include <rich-log/logger.hh>
 #endif
@@ -698,11 +699,19 @@ void td::Scheduler::start(td::container::task main_task)
 
     native::create_event(mEventWorkAvailable);
 
+#ifdef CC_OS_WINDOWS
     // attempt to make the win32 scheduler as granular as possible for faster Sleep(1)
-    bool const applied_win32_sched_change = native::win32_set_scheduler_granular();
+    bool applied_win32_sched_change = false;
+    if (native::win32_init_utils())
+    {
+        applied_win32_sched_change = native::win32_enable_scheduler_granular();
+    }
+
+#endif
+
 
 #ifdef TD_HAS_RICH_LOG
-    // always enable win32 colors in rich-log
+    // always enable win32 colors for rich-log
     rlog::enable_win32_colors();
 #endif
 
@@ -846,9 +855,12 @@ void td::Scheduler::start(td::container::task main_task)
         }
     }
 
+#ifdef CC_OS_WINDOWS
     // undo the changes made to the win32 scheduler
     if (applied_win32_sched_change)
-        native::win32_undo_scheduler_change();
+        native::win32_disable_scheduler_granular();
+    native::win32_shutdown_utils();
+#endif
 
     native::destroy_event(*mEventWorkAvailable);
 }

@@ -2,9 +2,13 @@
 
 namespace td::native
 {
-/// attempts to increase the OS scheduler timeslice to the minimum amount (~.7ms), returns true on success
-bool win32_set_scheduler_granular();
+/// loads and unloads Winmm.dll and the function pointers required for the utilities below
+bool win32_init_utils();
+void win32_shutdown_utils();
 
-/// undos the change
-bool win32_undo_scheduler_change();
+/// attempts to shorten the OS scheduler timeslice to the minimum amount (~.7ms) using timeBeginPeriod
+/// this change is global for the entire OS and should be undone at shutdown
+bool win32_enable_scheduler_granular();
+/// undos the change made above
+bool win32_disable_scheduler_granular();
 }
