@@ -22,27 +22,44 @@ struct event_t;
 
 struct scheduler_config
 {
+    /// amount of fibers created
+    /// limits the amount of concurrently waiting tasks
     unsigned num_fibers = 256;
+
+    /// amount of threads used
+    /// scheduler creates (num - 1) worker threads, the OS thread calling start() is the main thread
     unsigned num_threads = system::num_logical_cores();
+
+    /// amount of atomic counters created
+    /// limits the amount of concurrently live td::sync objects (lifetime: from first submit() to wait())
     unsigned max_num_counters = 512;
+
+    /// amount of tasks that can be concurrently in flight
     unsigned max_num_tasks = 4096;
+
+    /// stack size of each fiber in bytes
     cc::size_t fiber_stack_size = 64 * 1024;
 
-    // Some values in this config must be a power of 2
-    // Round up all values to the next power of 2
+    /// whether to lock the main and worker threads to logical cores
+    /// recommended on console-like plattforms
+    /// can degrade performance on a multitasking (desktop) OS depending on other process load
+    bool pin_threads_to_cores = false;
+
+public:
+    /// Some values in this config must be a power of 2
+    /// Round up all values to the next power of 2
     void ceil_to_pow2();
 
-    // Check for internal consistency
+    /// Check for internal consistency
     bool is_valid() const;
 
-    // ceil_to_pow2 + is_valid
+    /// ceil_to_pow2 + is_valid
     bool validate();
 };
 
 // Fiber-based task scheduler
-// Never allocates after the main task starts executing, supports custom allocators
-// Never throws or behaves erroneously, crashes immediately on any fatal error
-// submitTasks and wait must only be called from scheduler tasks
+// Never allocates after the main task starts executing
+// submitTasks and wait must only be called from inside scheduler tasks
 // td::sync objects passed to submitTasks must eventually be waited upon using wait
 class Scheduler
 {
@@ -93,6 +110,7 @@ private:
 
 private:
     size_t const mFiberStackSize;
+    bool const mEnablePinThreads;
     std::atomic_bool mIsShuttingDown = {false};
 
     cc::fwd_array<worker_thread_t> mThreads;

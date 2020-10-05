@@ -590,6 +590,7 @@ void td::Scheduler::counterIncrement(td::Scheduler::atomic_counter_t& counter, i
 
 td::Scheduler::Scheduler(scheduler_config const& config)
   : mFiberStackSize(config.fiber_stack_size),
+    mEnablePinThreads(config.pin_threads_to_cores),
     mThreads(cc::fwd_array<worker_thread_t>::defaulted(config.num_threads)),
     mFibers(cc::fwd_array<worker_fiber_t>::defaulted(config.num_fibers)),
     mCounters(cc::fwd_array<atomic_counter_t>::defaulted(config.max_num_counters)),
@@ -706,22 +707,25 @@ void td::Scheduler::start(td::container::task main_task)
     {
         applied_win32_sched_change = native::win32_enable_scheduler_granular();
     }
-
-#endif
-
-
 #ifdef TD_HAS_RICH_LOG
     // always enable win32 colors for rich-log
     rlog::enable_win32_colors();
 #endif
+#endif
+
 
     // Initialize main thread variables, create the thread fiber
     // The main thread is thread 0 by convention
     auto& main_thread = mThreads[0];
     {
-        // Receive native thread handle, lock to core 0
         main_thread.native = native::get_current_thread();
-        native::set_current_thread_affinity(0);
+
+        if (mEnablePinThreads)
+        {
+            // lock main thread to core N
+            // (core 0 is conventionally reserved for OS operations and driver interrupts, poor fit for the main thread)
+            native::set_current_thread_affinity(mThreads.size() - 1);
+        }
 
         s_tls.reset();
         sCurrentScheduler = this;
@@ -773,7 +777,18 @@ void td::Scheduler::start(td::container::task main_task)
             // Prepare worker arg
             callback_funcs::worker_arg_t* const worker_arg = cc::alloc<callback_funcs::worker_arg_t>(callback_funcs::worker_arg_t{i, this, thread_deques});
 
-            auto success = native::create_thread(mFiberStackSize + thread_stack_overhead_safety, callback_funcs::worker_func, worker_arg, i, &thread.native);
+            bool success = false;
+            if (mEnablePinThreads)
+            {
+                // Create the thread, pinned to core (i - 1), the main thread occupies core N
+                unsigned const pinned_core_index = i - 1;
+                success = native::create_thread(mFiberStackSize + thread_stack_overhead_safety, callback_funcs::worker_func, worker_arg,
+                                                pinned_core_index, &thread.native);
+            }
+            else
+            {
+                success = native::create_thread(mFiberStackSize + thread_stack_overhead_safety, callback_funcs::worker_func, worker_arg, &thread.native);
+            }
             CC_ASSERT(success && "Failed to create worker thread");
         }
     }
