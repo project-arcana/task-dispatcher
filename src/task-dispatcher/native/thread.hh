@@ -16,6 +16,7 @@
 #include <errno.h>
 #include <limits.h>
 #include <pthread.h>
+#include <signal.h>
 #include <unistd.h>
 
 #endif
@@ -168,45 +169,63 @@ inline bool set_stack_size(pthread_attr_t& thread_attributes, size_t stack_size)
 
     return true;
 }
+
+inline bool create_posix_thread(size_t stack_size, thread_start_func_t start_routine, void* arg, bool set_core_affinity, size_t core_affinity, thread_t* return_thread)
+{
+    pthread_attr_t thread_attr;
+    pthread_attr_init(&thread_attr);
+    CC_DEFER { pthread_attr_destroy(&thread_attr); };
+
+    if (!set_stack_size(thread_attr, stack_size))
+        return false;
+
+    if (set_core_affinity)
+    {
+#if defined(CC_OS_LINUX)
+        // Set core affinity
+        cpu_set_t cpu_set;
+        CPU_ZERO(&cpu_set);
+        CPU_SET(core_affinity, &cpu_set);
+        auto const setaffinity_res = pthread_attr_setaffinity_np(&thread_attr, sizeof(cpu_set_t), &cpu_set);
+        if (setaffinity_res != 0)
+            return false;
+#else
+        // TODO: OSX and MinGW Thread Affinity
+        (void)coreAffinity;
+#endif
+    }
+
+    // we don't want any worker threads to ever receive signals
+    // set the signal mask to block all signals (applies to the newly created thread)
+    // see https://man7.org/linux/man-pages/man3/pthread_sigmask.3.html#NOTES
+    // "A new thread inherits a copy of its creator's signal mask."
+    sigset_t old_sig_mask;
+    sigset_t sig_mask;
+    sigfillset(&sig_mask); // mask now includes all signals
+    // block (SIG_BLOCK) all signals and receive the previous mask
+    bool const is_signal_mask_set = pthread_sigmask(SIG_BLOCK, &sig_mask, &old_sig_mask) == 0;
+
+    auto const create_res = pthread_create(&return_thread->native, &thread_attr, start_routine, arg);
+
+    // undo the signal mask change for the calling thread
+    if (is_signal_mask_set)
+    {
+        // restore (SIG_SETMASK) the previous mask
+        pthread_sigmask(SIG_SETMASK, &old_sig_mask, nullptr);
+    }
+
+    return create_res == 0;
+}
 }
 
 inline bool create_thread(size_t stack_size, thread_start_func_t start_routine, void* arg, thread_t* return_thread)
 {
-    pthread_attr_t thread_attr;
-    pthread_attr_init(&thread_attr);
-    CC_DEFER { pthread_attr_destroy(&thread_attr); };
-
-    if (!detail::set_stack_size(thread_attr, stack_size))
-        return false;
-
-    auto const create_res = pthread_create(&return_thread->native, &thread_attr, start_routine, arg);
-    return create_res == 0;
+    return detail::create_posix_thread(stack_size, start_routine, arg, false, 0, return_thread);
 }
 
 inline bool create_thread(size_t stack_size, thread_start_func_t start_routine, void* arg, size_t core_affinity, thread_t* return_thread)
 {
-    pthread_attr_t thread_attr;
-    pthread_attr_init(&thread_attr);
-    CC_DEFER { pthread_attr_destroy(&thread_attr); };
-
-    if (!detail::set_stack_size(thread_attr, stack_size))
-        return false;
-
-#if defined(CC_OS_LINUX)
-    // Set core affinity
-    cpu_set_t cpu_set;
-    CPU_ZERO(&cpu_set);
-    CPU_SET(core_affinity, &cpu_set);
-    auto const setaffinity_res = pthread_attr_setaffinity_np(&thread_attr, sizeof(cpu_set_t), &cpu_set);
-    if (setaffinity_res != 0)
-        return false;
-#else
-    // TODO: OSX and MinGW Thread Affinity
-    (void)coreAffinity;
-#endif
-
-    auto const create_res = pthread_create(&return_thread->native, &thread_attr, start_routine, arg);
-    return create_res == 0;
+    return detail::create_posix_thread(stack_size, start_routine, arg, true, core_affinity, return_thread);
 }
 
 [[noreturn]] inline void end_current_thread() { pthread_exit(nullptr); }
@@ -280,5 +299,6 @@ inline void thread_sleep(uint32_t milliseconds)
     //    ts.tv_nsec = (milliseconds % 1000) * 1000000;
     //    nanosleep(&ts, NULL);
 }
+
 #endif
 }
