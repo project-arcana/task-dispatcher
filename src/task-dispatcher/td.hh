@@ -2,7 +2,7 @@
 
 #include <tuple> // TODO: Replace with cc::tuple
 
-#include <clean-core/array.hh>
+#include <clean-core/alloc_array.hh>
 #include <clean-core/assert.hh>
 #include <clean-core/bits.hh>
 #include <clean-core/enable_if.hh>
@@ -79,18 +79,8 @@ private:
 // ==========
 // Submit
 
-// TODO Single pointer to member with arguments
-// template <class F, class FObj, class... Args>
-// void submit(sync& s, F&& fun, FObj& inst, Args&&... args)
-//{
-//    using FuncT = decltype (inst.*fun);
-//    static_assert(std::is_invocable_v<FuncT, Args...>, "function must be invocable with the given args");
-//    static_assert(std::is_same_v<std::invoke_result_t<FuncT, Args...>, void>, "return must be void");
-//    container::task dispatch([fun, args..., &inst] { (inst.*fun)(args...); });
-//    Scheduler::current().submitTasks(&dispatch, 1, s);
-//}
-
-// Single lambda with arguments
+/// submit a task based on a lambda, with arguments passed to it
+/// arguments are moved into the task
 template <class F, class... Args>
 void submit(sync& s, F&& fun, Args&&... args)
 {
@@ -102,7 +92,8 @@ void submit(sync& s, F&& fun, Args&&... args)
     submit_raw(s, &dispatch, 1);
 }
 
-// Pointer to member function with arguments - sync return variant, with optional return type
+/// submit a task based on a member function, with arguments passed to it
+/// arguments are moved into the task
 template <class F, class FObj, class... Args, cc::enable_if<std::is_member_function_pointer_v<F>> = true>
 void submit(sync& s, F func, FObj& inst, Args&&... args)
 {
@@ -116,50 +107,51 @@ void submit(sync& s, F func, FObj& inst, Args&&... args)
     submit_raw(s, &dispatch, 1);
 }
 
-// Lambda called n times with index argument
+/// submits tasks calling a lambda "void f(unsigned i)" for each i from 0 to n
 template <class F>
-void submit_n(sync& sync, F&& func, unsigned n)
+void submit_n(sync& sync, F&& func, unsigned n, cc::allocator* scratch_alloc = cc::system_allocator)
 {
     static_assert(std::is_invocable_v<F, unsigned>, "function must be invocable with index argument");
     static_assert(std::is_same_v<std::invoke_result_t<F, unsigned>, void>, "return must be void");
 
-    auto tasks = cc::array<td::container::task>::uninitialized(n);
+    auto tasks = cc::alloc_array<td::container::task>::uninitialized(n, scratch_alloc);
     for (auto i = 0u; i < n; ++i)
         tasks[i].lambda([=] { func(i); });
     submit_raw(sync, tasks.data(), n);
 }
 
-// Lambda called for each element with element reference
+/// submits tasks calling a lambda "void f(T& value)" for each element in the span
 template <class T, class F>
-void submit_each_ref(sync& sync, F&& func, cc::span<T> vals)
+void submit_each_ref(sync& sync, F&& func, cc::span<T> vals, cc::allocator* scratch_alloc = cc::system_allocator)
 {
     static_assert(std::is_invocable_v<F, T&>, "function must be invocable with element reference");
     static_assert(std::is_same_v<std::invoke_result_t<F, T&>, void>, "return must be void");
 
-    auto tasks = cc::array<td::container::task>::uninitialized(vals.size());
+    auto tasks = cc::alloc_array<td::container::task>::uninitialized(vals.size(), scratch_alloc);
     for (auto i = 0u; i < vals.size(); ++i)
         tasks[i].lambda([func, val_ptr = vals.data() + i] { func(*val_ptr); });
 
     submit_raw(sync, tasks.data(), unsigned(vals.size()));
 }
 
-// Lambda called for each element with element copy
+/// submits tasks calling a lambda "void f(T value)" for each element in the span
 template <class T, class F>
-void submit_each_copy(sync& sync, F&& func, cc::span<T> vals)
+void submit_each_copy(sync& sync, F&& func, cc::span<T> vals, cc::allocator* scratch_alloc = cc::system_allocator)
 {
     static_assert(std::is_invocable_v<F, T>, "function must be invocable with element copy");
     static_assert(std::is_same_v<std::invoke_result_t<F, T>, void>, "return must be void");
 
-    auto tasks = cc::array<td::container::task>::uninitialized(vals.size());
+    auto tasks = cc::alloc_array<td::container::task>::uninitialized(vals.size(), scratch_alloc);
     for (auto i = 0u; i < vals.size(); ++i)
         tasks[i].lambda([func, val_copy = vals[i]] { func(val_copy); });
 
     submit_raw(sync, tasks.data(), unsigned(vals.size()));
 }
 
-// Lambda called for each batch, with batch start and end
+/// submits tasks calling a lambda "void f(unsigned start, unsigned end)" for multiple batches over the range 0 to n
+/// num_batches_max: maximum amount of batches to partition the range into
 template <class F>
-void submit_batched(sync& sync, F&& func, unsigned n, unsigned num_batches_max = td::system::num_logical_cores() * 4)
+unsigned submit_batched(sync& sync, F&& func, unsigned n, unsigned num_batches_max = td::system::num_logical_cores() * 4, cc::allocator* scratch_alloc = cc::system_allocator)
 {
     static_assert(std::is_invocable_v<F, unsigned, unsigned>, "function must be invocable with batch start and end argument");
     static_assert(std::is_same_v<std::invoke_result_t<F, unsigned, unsigned>, void>, "return must be void");
@@ -169,18 +161,23 @@ void submit_batched(sync& sync, F&& func, unsigned n, unsigned num_batches_max =
 
     CC_RUNTIME_ASSERT(num_batches <= num_batches_max && "programmer error");
 
-    auto tasks = cc::array<td::container::task>::uninitialized(num_batches);
+    auto tasks = cc::alloc_array<td::container::task>::uninitialized(num_batches, scratch_alloc);
 
-    for (auto batch = 0u, batchStart = 0u, batchEnd = cc::min(batch_size, n); batch < num_batches;
-         ++batch, batchStart = batch * batch_size, batchEnd = cc::min((batch + 1) * batch_size, n))
-        tasks[batch].lambda([=] { func(batchStart, batchEnd); });
+    for (unsigned batch = 0u, start = 0u, end = cc::min(batch_size, n); //
+         batch < num_batches;                                           //
+         ++batch, start = batch * batch_size, end = cc::min((batch + 1) * batch_size, n))
+    {
+        tasks[batch].lambda([=] { func(start, end); });
+    }
 
     submit_raw(sync, tasks.data(), num_batches);
+    return num_batches;
 }
 
-// Lambda called for each batch, with batch start, end, and batch index
+/// submits tasks calling a lambda "void f(unsigned start, unsigned end, unsigned batch_i)" for multiple batches over the range 0 to n
+/// num_batches_max: maximum amount of batches to partition the range into
 template <class F>
-void submit_batched_n(sync& sync, F&& func, unsigned n, unsigned num_batches_max = td::system::num_logical_cores() * 4)
+unsigned submit_batched_n(sync& sync, F&& func, unsigned n, unsigned num_batches_max = td::system::num_logical_cores() * 4, cc::allocator* scratch_alloc = cc::system_allocator)
 {
     static_assert(std::is_invocable_v<F, unsigned, unsigned, unsigned>, "function must be invocable with batch start, end, and index argument");
     static_assert(std::is_same_v<std::invoke_result_t<F, unsigned, unsigned, unsigned>, void>, "return must be void");
@@ -190,13 +187,17 @@ void submit_batched_n(sync& sync, F&& func, unsigned n, unsigned num_batches_max
 
     CC_RUNTIME_ASSERT(num_batches <= num_batches_max && "programmer error");
 
-    auto tasks = cc::array<td::container::task>::uninitialized(num_batches);
+    auto tasks = cc::alloc_array<td::container::task>::uninitialized(num_batches, scratch_alloc);
 
-    for (auto batch = 0u, batchStart = 0u, batchEnd = cc::min(batch_size, n); batch < num_batches;
-         ++batch, batchStart = batch * batch_size, batchEnd = cc::min((batch + 1) * batch_size, n))
-        tasks[batch].lambda([=] { func(batchStart, batchEnd, batch); });
+    for (unsigned batch = 0u, start = 0u, end = cc::min(batch_size, n); //
+         batch < num_batches;                                           //
+         ++batch, start = batch * batch_size, end = cc::min((batch + 1) * batch_size, n))
+    {
+        tasks[batch].lambda([=] { func(start, end, batch); });
+    }
 
     submit_raw(sync, tasks.data(), num_batches);
+    return num_batches;
 }
 
 // ==========
