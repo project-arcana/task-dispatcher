@@ -55,6 +55,7 @@ void wait_for_unpinned(STs&... syncs)
 // ==========
 // Launch
 
+/// launches a scheduler with the given config, and calls the lambda as its main task
 template <class F>
 void launch(scheduler_config config, F&& func)
 {
@@ -75,12 +76,14 @@ void launch(scheduler_config config, F&& func)
     scheduler.start(mainTask);
 }
 
+/// launches a scheduler with default config, and calls the lambda as its main task
 template <class F>
 void launch(F&& func)
 {
     return launch(scheduler_config{}, cc::forward<F>(func));
 }
 
+/// launches a scheduler restricted to a single thread, and calls the lambda as its main task
 template <class F>
 void launch_singlethreaded(F&& func)
 {
@@ -93,17 +96,18 @@ void launch_singlethreaded(F&& func)
 // ==========
 // Submit
 
-// Raw submit from constructed Task types
+/// submit multiple pre-constructed tasks
 inline void submit_raw(sync& sync, container::task* tasks, unsigned num)
 {
     CC_ASSERT(td::is_scheduler_alive() && "attempted submit outside of live scheduler");
     td::Scheduler::Current().submitTasks(tasks, num, sync);
 }
 
+/// submit multiple pre-constructed tasks
 inline void submit_raw(sync& sync, cc::span<container::task> tasks) { submit_raw(sync, tasks.data(), unsigned(tasks.size())); }
 
 
-// Single lambda
+/// construct and submit a task based on a single "void f()" lambda or function pointer
 template <class F, cc::enable_if<std::is_invocable_r_v<void, F>> = true>
 void submit(sync& sync, F&& func)
 {
@@ -122,6 +126,7 @@ void submit(sync& sync, F&& func)
 // ==========
 // Sync return variants
 
+/// submit multiple pre-constructed tasks and receive an associated new sync object
 [[nodiscard]] inline sync submit_raw(cc::span<container::task> tasks)
 {
     td::sync res;
@@ -129,6 +134,7 @@ void submit(sync& sync, F&& func)
     return res;
 }
 
+/// submit multiple pre-constructed tasks and receive an associated new sync object
 [[nodiscard]] inline sync submit_raw(container::task* tasks, unsigned num)
 {
     td::sync res;
