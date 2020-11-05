@@ -141,4 +141,17 @@ void submit(sync& sync, F&& func)
     submit_raw(res, tasks, num);
     return res;
 }
+
+namespace experimental
+{
+/// experimental: manually increment a sync object, preventing waits on it to resolve
+/// normally, a sync is incremented by 1 for every task submitted on it
+inline void increment_sync(sync& sync, unsigned amount = 1) { Scheduler::Current().incrementSync(sync, amount); }
+
+
+/// experimental: manually decrement a sync object, potentially causing waits on it to resolve
+/// WARNING: this should not be called without prior calls to incrementSync
+/// normally, a sync is decremented once a task submitted on it is finished
+inline void decrement_sync(sync& sync, unsigned amount = 1) { Scheduler::Current().decrementSync(sync, amount); }
+}
 }

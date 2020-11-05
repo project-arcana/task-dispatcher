@@ -213,7 +213,7 @@ struct Scheduler::callback_funcs
         s_tls.thread_index = worker_arg->index;
 
 #ifdef TD_HAS_RICH_LOG
-        rlog::set_current_thread_name("td#%u", worker_arg->index);
+        rlog::set_current_thread_name("td#%.2u", worker_arg->index);
 #endif
 
         // Set up chase lev deques
@@ -547,8 +547,10 @@ void td::Scheduler::counterCheckWaitingFibers(td::Scheduler::atomic_counter_t& c
             bool expected = false;
             if (!std::atomic_compare_exchange_strong_explicit(&slot.in_use, &expected, true, //
                                                               std::memory_order_seq_cst, std::memory_order_relaxed))
+            {
                 // Failed to lock, this slot is already being handled on a different thread (which stole it right between the two checks)
                 continue;
+            }
 
             //            KW_LOG_DIAG("[cnst_check_waiting_fibers] Counter reached " << value << ", making waiting fiber " << slot.fiber_index << " resumable");
 
@@ -686,6 +688,49 @@ void td::Scheduler::wait(td::sync& sync, bool pinnned, int target)
     }
 }
 
+void td::Scheduler::incrementSync(td::sync& sync, unsigned amount)
+{
+    counter_index_t counter_index;
+    if (sync.initialized)
+    {
+        // Initialized handle, read its counter index
+        CC_RUNTIME_ASSERT(!mCounterHandles.isExpired(sync.handle)
+                          && "Attempted to run tasks using an expired sync, consider increasing "
+                             "Scheduler::max_handles_in_flight");
+        counter_index = mCounterHandles.get(sync.handle);
+    }
+    else
+    {
+        // Unitialized handle, acquire a free counter and link it to the handle
+        counter_index = acquireFreeCounter();
+        sync.handle = mCounterHandles.acquire(counter_index);
+        sync.initialized = true;
+    }
+
+    counterIncrement(mCounters[counter_index], int(amount));
+}
+
+void td::Scheduler::decrementSync(td::sync& sync, unsigned amount)
+{
+    // skip uninitialized sync handles
+    if (!sync.initialized)
+    {
+        return;
+    }
+
+    auto const counter_index = mCounterHandles.get(sync.handle);
+
+    // re-enqueue all waiting tasks as resumable
+    counterIncrement(mCounters[counter_index], -1 * int(amount));
+
+    // if the counter has reached zero, free it for re-use and de-initialize the sync handle
+    if (mCounters[counter_index].count.load(std::memory_order_acquire) == 0)
+    {
+        mFreeCounters.enqueue(counter_index);
+        sync.initialized = false;
+    }
+}
+
 unsigned td::Scheduler::CurrentThreadIndex() { return s_tls.thread_index; }
 unsigned td::Scheduler::CurrentFiberIndex() { return s_tls.current_fiber_index; }
 
@@ -734,7 +779,7 @@ void td::Scheduler::start(td::container::task main_task)
         native::create_main_fiber(s_tls.thread_fiber);
 
 #ifdef TD_HAS_RICH_LOG
-        rlog::set_current_thread_name("td#0");
+        rlog::set_current_thread_name("td#%.2u", 0);
 #endif
     }
 

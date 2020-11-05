@@ -75,8 +75,16 @@ public:
 
     /// Enqueue the given tasks and associate them with a sync object
     void submitTasks(container::task* tasks, unsigned num_tasks, td::sync& sync);
+
     /// Resume execution after the given sync object has reached a set target
     void wait(td::sync& sync, bool pinnned = false, int target = 0);
+
+    /// experimental: manually increment a sync object, preventing waits to resolve
+    void incrementSync(td::sync& sync, unsigned amount = 1);
+
+    /// experimental: manually decrement a sync object, potentially causing waits on it to resolve
+    /// WARNING: this should not be called without prior calls to incrementSync
+    void decrementSync(td::sync& sync, unsigned amount = 1);
 
     /// Returns the amount of threads this scheduler controls
     [[nodiscard]] unsigned getNumThreads() const { return unsigned(mThreads.size()); }
