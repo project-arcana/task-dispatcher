@@ -73,29 +73,33 @@ public:
     /// Launch the scheduler with the given main task
     void start(container::task main_task);
 
-    /// acquire a sync object
+    /// acquire a counter
     [[nodiscard]] counter_handle_t acquireCounterHandle();
 
-    /// release a sync object
+    /// release a counter
     /// returns the last counter state
     int releaseCounter(counter_handle_t handle);
 
-    /// release a sync object if a target is reached
+    /// release a counter if a target is reached
     /// returns true if the release succeeded
     [[nodiscard]] bool releaseCounterIfOnTarget(counter_handle_t handle, int target);
 
-    /// Enqueue the given tasks and associate them with a sync object
-    void submitTasks(container::task* tasks, unsigned num_tasks, counter_handle_t sync);
+    /// Enqueue the given tasks and associate them with a counter object
+    void submitTasks(container::task* tasks, unsigned num_tasks, counter_handle_t handle);
 
-    /// Resume execution after the given sync object has reached a set target
-    void wait(counter_handle_t sync, bool pinnned = false, int target = 0);
+    /// Enqueue the given tasks - will eventually finish, but no way to wait on them
+    void submitTasksWithoutCounter(container::task* tasks, unsigned num_tasks);
 
-    /// experimental: manually increment a sync object, preventing waits to resolve
-    void incrementCounter(counter_handle_t sync, unsigned amount = 1);
+    /// Resume execution after the given counter has reached a set target
+    /// returns the counter value before the wait
+    int wait(counter_handle_t handle, bool pinnned = false, int target = 0);
 
-    /// experimental: manually decrement a sync object, potentially causing waits on it to resolve
-    /// WARNING: this should not be called without prior calls to incrementSync
-    void decrementCounter(counter_handle_t sync, unsigned amount = 1);
+    /// experimental: manually increment a counter, preventing waits to resolve
+    void incrementCounter(counter_handle_t handle, unsigned amount = 1);
+
+    /// experimental: manually decrement a counter, potentially causing waits on it to resolve
+    /// WARNING: this should not be called without prior calls to incrementCounter
+    void decrementCounter(counter_handle_t handle, unsigned amount = 1);
 
     /// Returns the amount of threads this scheduler controls
     [[nodiscard]] unsigned getNumThreads() const { return unsigned(mThreads.size()); }
@@ -164,10 +168,12 @@ private:
     bool getNextTask(container::task& task);
     bool tryResumeFiber(fiber_index_t fiber);
 
-    bool counterAddWaitingFiber(atomic_counter_t& counter, fiber_index_t fiber_index, thread_index_t pinned_thread_index, int counter_target);
+    bool counterAddWaitingFiber(atomic_counter_t& counter, fiber_index_t fiber_index, thread_index_t pinned_thread_index, int counter_target, int& out_current_counter_value);
     void counterCheckWaitingFibers(atomic_counter_t& counter, int value);
 
     void counterIncrement(atomic_counter_t& counter, int amount = 1);
+
+    bool enqueueTasks(td::container::task* tasks, unsigned num_tasks, counter_index_t counter_i);
 
     Scheduler(Scheduler const& other) = delete;
     Scheduler(Scheduler&& other) noexcept = delete;
