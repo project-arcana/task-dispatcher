@@ -96,7 +96,8 @@ inline void submit_raw(sync& sync, container::task* tasks, unsigned num)
 inline void submit_raw(sync& sync, cc::span<container::task> tasks) { submit_raw(sync, tasks.data(), unsigned(tasks.size())); }
 
 
-/// construct and submit a task based on a single "void f()" lambda or function pointer
+/// construct and submit a task
+/// based on a single "void f()" lambda or function pointer
 template <class F, cc::enable_if<std::is_invocable_r_v<void, F>> = true>
 void submit(sync& sync, F&& func)
 {
@@ -109,6 +110,26 @@ void submit(sync& sync, F&& func)
     else
         dispatch.lambda([=] { func(); });
     submit_raw(sync, &dispatch, 1);
+}
+
+/// submit multiple pre-constructed tasks without a sync
+inline void submit_raw_unsynced(container::task* tasks, unsigned num) { td::Scheduler::Current().submitTasksWithoutCounter(tasks, num); }
+
+/// construct and submit a task without a sync
+/// based on a single "void f()" lambda or function pointer
+template <class F, cc::enable_if<std::is_invocable_r_v<void, F>> = true>
+void submit_unsynced(F&& func)
+{
+    static_assert(std::is_invocable_v<F>, "function must be invocable without arguments");
+    static_assert(std::is_invocable_r_v<void, F>, "return must be void");
+
+    container::task dispatch;
+    if constexpr (std::is_class_v<F>)
+        dispatch.lambda(cc::forward<F>(func));
+    else
+        dispatch.lambda([=] { func(); });
+
+    submit_raw_unsynced(&dispatch, 1);
 }
 
 
@@ -133,16 +154,16 @@ void submit(sync& sync, F&& func)
 
 namespace detail
 {
-inline void single_wait_for(sync& sync, bool pinned)
+inline int single_wait_for(sync& sync, bool pinned)
 {
     if (!sync.initialized)
     {
         // return immediately for uninitialized syncs
-        return;
+        return 0;
     }
 
     // perform real wait
-    Scheduler::Current().wait(sync.handle, pinned, 0);
+    int const res = Scheduler::Current().wait(sync.handle, pinned, 0);
 
     // free the sync if it reached 0
     if (Scheduler::Current().releaseCounterIfOnTarget(sync.handle, 0))
@@ -150,23 +171,29 @@ inline void single_wait_for(sync& sync, bool pinned)
         // mark as uninitialized
         sync.initialized = false;
     }
+
+    return res;
 }
 }
 
 // ==========
 // Wait on sync objects
 
-inline void wait_for(sync& sync) { detail::single_wait_for(sync, true); }
-inline void wait_for_unpinned(sync& sync) { detail::single_wait_for(sync, false); }
+/// waits on a sync object, returns it's value before the call
+inline int wait_for(sync& sync) { return detail::single_wait_for(sync, true); }
+
+/// waits on a sync object, returns it's value before the call
+/// unpinned: can resume execution on a different thread than the calling one
+inline int wait_for_unpinned(sync& sync) { return detail::single_wait_for(sync, false); }
 
 template <class... STs>
-void wait_for(STs&... syncs)
+[[deprecated("multi-wait overloads will be removed in a future version")]] void wait_for(STs&... syncs)
 {
     (detail::single_wait_for(syncs, true), ...);
 }
 
 template <class... STs>
-void wait_for_unpinned(STs&... syncs)
+[[deprecated("multi-wait overloads will be removed in a future version")]] void wait_for_unpinned(STs&... syncs)
 {
     (detail::single_wait_for(syncs, false), ...);
 }
@@ -200,7 +227,28 @@ inline void increment_counter(counter_handle_t handle, unsigned amount = 1) { Sc
 /// WARNING: without previous calls to increment_sync, this will cause wait-calls to resolve before all tasks have finished
 inline void decrement_counter(counter_handle_t handle, unsigned amount = 1) { Scheduler::Current().decrementCounter(handle, amount); }
 
-inline void wait_for_counter(counter_handle_t handle, bool pinned, int target = 0) { Scheduler::Current().wait(handle, pinned, target); }
+/// waits on a counter, returns it's value before the wait
+inline int wait_for_counter(counter_handle_t handle, bool pinned, int target = 0) { return Scheduler::Current().wait(handle, pinned, target); }
+
+inline void submit_on_counter(counter_handle_t handle, container::task* tasks, unsigned num)
+{
+    td::Scheduler::Current().submitTasks(tasks, num, handle);
+}
+
+template <class F, cc::enable_if<std::is_invocable_r_v<void, F>> = true>
+void submit_lambda_on_counter(counter_handle_t handle, F&& func)
+{
+    static_assert(std::is_invocable_v<F>, "function must be invocable without arguments");
+    static_assert(std::is_invocable_r_v<void, F>, "return must be void");
+
+    container::task dispatch;
+    if constexpr (std::is_class_v<F>)
+        dispatch.lambda(cc::forward<F>(func));
+    else
+        dispatch.lambda([=] { func(); });
+
+    submit_on_counter(handle, &dispatch, 1);
+}
 }
 
 }
