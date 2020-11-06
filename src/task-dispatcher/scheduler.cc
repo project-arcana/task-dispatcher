@@ -58,7 +58,7 @@ namespace td
 {
 using resumable_fiber_mpsc_queue = container::FIFOQueue<Scheduler::fiber_index_t, 32>;
 
-struct Scheduler::atomic_counter_t
+struct alignas(64) Scheduler::atomic_counter_t
 {
     struct waiting_fiber_t
     {
@@ -263,7 +263,8 @@ struct Scheduler::callback_funcs
                 counter_index_t const associated_counter = task.get_metadata();
                 if (associated_counter != invalid_counter)
                 {
-                    scheduler->counterIncrement(scheduler->mCounters[associated_counter], -1);
+                    counter_handle_t const reconstructed_handle = scheduler->mCounters.unsafe_construct_handle_for_index(associated_counter);
+                    scheduler->counterIncrement(scheduler->mCounters.get(reconstructed_handle), -1);
                 }
             }
             else
@@ -358,13 +359,11 @@ td::Scheduler::fiber_index_t td::Scheduler::acquireFreeFiber()
     }
 }
 
-td::Scheduler::counter_index_t td::Scheduler::acquireFreeCounter()
+td::counter_handle_t td::Scheduler::acquireFreeCounter()
 {
-    counter_index_t free_counter;
-    auto success = mFreeCounters.dequeue(free_counter);
-    CC_RUNTIME_ASSERT(success && "No free counters available, consider increasing config.max_num_counters");
-    mCounters[free_counter].reset();
-    return free_counter;
+    auto const res = mCounters.acquire();
+    mCounters.get(res).reset();
+    return res;
 }
 
 void td::Scheduler::yieldToFiber(td::Scheduler::fiber_index_t target_fiber, td::Scheduler::fiber_destination_e own_destination)
@@ -624,15 +623,16 @@ bool td::Scheduler::enqueueTasks(td::container::task* tasks, unsigned num_tasks,
 
 td::Scheduler::Scheduler(scheduler_config const& config)
   : mFiberStackSize(config.fiber_stack_size),
+    mNumCounters(config.max_num_counters),
     mEnablePinThreads(config.pin_threads_to_cores),
     mThreads(cc::fwd_array<worker_thread_t>::defaulted(config.num_threads)),
     mFibers(cc::fwd_array<worker_fiber_t>::defaulted(config.num_fibers)),
-    mCounters(cc::fwd_array<atomic_counter_t>::defaulted(config.max_num_counters)),
     mTasks(config.max_num_tasks),
     mIdleFibers(mFibers.size()),
-    mResumableFibers(mFibers.size()), // TODO: Smaller?
-    mFreeCounters(config.max_num_counters)
+    mResumableFibers(mFibers.size()) // TODO: Smaller?
 {
+    static_assert(std::is_trivially_destructible_v<Scheduler::atomic_counter_t>, "atomic counter type not trivially destructible");
+
     mEventWorkAvailable = new native::event_t();
 
     CC_ASSERT(config.is_valid() && "Scheduler config invalid, use scheduler_config_t::validate()");
@@ -641,34 +641,24 @@ td::Scheduler::Scheduler(scheduler_config const& config)
 
 td::Scheduler::~Scheduler() { delete mEventWorkAvailable; }
 
-td::counter_handle_t td::Scheduler::acquireCounterHandle()
-{
-    auto const new_counter_index = acquireFreeCounter();
-    auto const new_handle = mCounterHandles.acquire(new_counter_index);
-    return new_handle;
-}
+td::counter_handle_t td::Scheduler::acquireCounterHandle() { return acquireFreeCounter(); }
 
 int td::Scheduler::releaseCounter(td::counter_handle_t handle)
 {
-    CC_RUNTIME_ASSERT(!mCounterHandles.isExpired(handle) && "released expired sync, increase Scheduler::max_handles_in_flight");
-    auto const counter_index = mCounterHandles.get(handle);
-    int const last_state = mCounters[counter_index].count.load(std::memory_order_acquire);
+    int const last_state = mCounters.get(handle).count.load(std::memory_order_acquire);
+    mCounters.release(handle);
 
-    mFreeCounters.enqueue(counter_index);
     return last_state;
 }
 
 bool td::Scheduler::releaseCounterIfOnTarget(td::counter_handle_t handle, int target)
 {
-    CC_RUNTIME_ASSERT(!mCounterHandles.isExpired(handle) && "released expired sync, increase Scheduler::max_handles_in_flight");
-    auto const counter_index = mCounterHandles.get(handle);
-
     int expected = target;
-    bool const cas_success = mCounters[counter_index].count.compare_exchange_strong(expected, 0);
+    bool const cas_success = mCounters.get(handle).count.compare_exchange_strong(expected, 0);
 
     if (cas_success)
     {
-        mFreeCounters.enqueue(counter_index);
+        mCounters.release(handle);
     }
 
     return cas_success;
@@ -676,9 +666,8 @@ bool td::Scheduler::releaseCounterIfOnTarget(td::counter_handle_t handle, int ta
 
 void td::Scheduler::submitTasks(td::container::task* tasks, unsigned num_tasks, counter_handle_t handle)
 {
-    CC_RUNTIME_ASSERT(!mCounterHandles.isExpired(handle) && "submitted tasks on an expired sync, increase Scheduler::max_handles_in_flight");
-    counter_index_t const counter_index = mCounterHandles.get(handle);
-    counterIncrement(mCounters[counter_index], int(num_tasks));
+    counterIncrement(mCounters.get(handle), int(num_tasks));
+    counter_index_t const counter_index = counter_index_t(mCounters.get_handle_index(handle));
 
     enqueueTasks(tasks, num_tasks, counter_index);
 }
@@ -689,15 +678,12 @@ int td::Scheduler::wait(counter_handle_t handle, bool pinnned, int target)
 {
     CC_ASSERT(target >= 0 && "sync counter target must not be negative");
 
-    CC_RUNTIME_ASSERT(!mCounterHandles.isExpired(handle) && "waited on an expired sync, increase Scheduler::max_handles_in_flight");
-    auto const counter_index = mCounterHandles.get(handle);
-
     // The current fiber is now waiting, but not yet cleaned up
     mFibers[s_tls.current_fiber_index].is_waiting_cleaned_up.store(false, std::memory_order_release);
 
     int current_counter_value = 0;
 
-    if (counterAddWaitingFiber(mCounters[counter_index], s_tls.current_fiber_index, pinnned ? s_tls.thread_index : invalid_thread, target, current_counter_value))
+    if (counterAddWaitingFiber(mCounters.get(handle), s_tls.current_fiber_index, pinnned ? s_tls.thread_index : invalid_thread, target, current_counter_value))
     {
         // Already done
     }
@@ -713,21 +699,12 @@ int td::Scheduler::wait(counter_handle_t handle, bool pinnned, int target)
     return current_counter_value;
 }
 
-void td::Scheduler::incrementCounter(counter_handle_t handle, unsigned amount)
-{
-    CC_RUNTIME_ASSERT(!mCounterHandles.isExpired(handle) && "incremented an expired sync, increase Scheduler::max_handles_in_flight");
-    counter_index_t counter_index = mCounterHandles.get(handle);
-
-    counterIncrement(mCounters[counter_index], int(amount));
-}
+void td::Scheduler::incrementCounter(counter_handle_t handle, unsigned amount) { counterIncrement(mCounters.get(handle), int(amount)); }
 
 void td::Scheduler::decrementCounter(counter_handle_t handle, unsigned amount)
 {
-    CC_RUNTIME_ASSERT(!mCounterHandles.isExpired(handle) && "decremented an expired sync, increase Scheduler::max_handles_in_flight");
-    auto const counter_index = mCounterHandles.get(handle);
-
     // re-enqueue all waiting tasks as resumable
-    counterIncrement(mCounters[counter_index], -1 * int(amount));
+    counterIncrement(mCounters.get(handle), -1 * int(amount));
 }
 
 unsigned td::Scheduler::CurrentThreadIndex() { return s_tls.thread_index; }
@@ -738,7 +715,7 @@ void td::Scheduler::start(td::container::task main_task)
     // Re-default all arrays, as multiple starts are possible
     mThreads = cc::fwd_array<worker_thread_t>::defaulted(mThreads.size());
     mFibers = cc::fwd_array<worker_fiber_t>::defaulted(mFibers.size());
-    mCounters = cc::fwd_array<atomic_counter_t>::defaulted(mCounters.size());
+    mCounters.initialize(mNumCounters);
 
     mIsShuttingDown.store(false, std::memory_order_seq_cst);
 
@@ -787,12 +764,6 @@ void td::Scheduler::start(td::container::task main_task)
     {
         native::create_fiber(mFibers[i].native, callback_funcs::fiber_func, this, mFiberStackSize);
         mIdleFibers.enqueue(i);
-    }
-
-    // Populate free counter queue
-    for (counter_index_t i = 0; i < mCounters.size(); ++i)
-    {
-        mFreeCounters.enqueue(i);
     }
 
     // Launch worker threads, starting at 1
@@ -924,15 +895,7 @@ void td::Scheduler::start(td::container::task main_task)
                 }
             }
 
-            // counter queues
-            counter_index_t counter_dump;
-            while (mFreeCounters.dequeue(counter_dump))
-            {
-                // Spin
-            }
-
-            // Reset counter handles
-            mCounterHandles.reset();
+            mCounters.destroy();
 
             // Clear sCurrentScheduler
             sCurrentScheduler = nullptr;

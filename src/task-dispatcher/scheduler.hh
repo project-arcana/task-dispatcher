@@ -6,9 +6,9 @@
 #include <clean-core/typedefs.hh>
 
 #include <task-dispatcher/common/system_info.hh>
+#include <task-dispatcher/container/linked_pool.hh>
 #include <task-dispatcher/container/mpmc_queue.hh>
 #include <task-dispatcher/container/task.hh>
-#include <task-dispatcher/container/version_ring.hh>
 #include <task-dispatcher/sync.hh>
 
 namespace td
@@ -133,22 +133,18 @@ private:
 
 private:
     size_t const mFiberStackSize;
+    unsigned const mNumCounters;
     bool const mEnablePinThreads;
     std::atomic_bool mIsShuttingDown = {false};
 
     cc::fwd_array<worker_thread_t> mThreads;
     cc::fwd_array<worker_fiber_t> mFibers;
-    cc::fwd_array<atomic_counter_t> mCounters;
+    container::linked_pool<atomic_counter_t> mCounters;
 
     // Queues
     container::MPMCQueue<container::task> mTasks;
     container::MPMCQueue<fiber_index_t> mIdleFibers;
     container::MPMCQueue<fiber_index_t> mResumableFibers;
-    container::MPMCQueue<counter_index_t> mFreeCounters;
-
-    // User handles
-    static auto constexpr max_handles_in_flight = 512;
-    container::VersionRing<counter_index_t, max_handles_in_flight> mCounterHandles;
 
     // Worker wakeup event
     native::event_t* mEventWorkAvailable;
@@ -160,7 +156,7 @@ private:
 
 private:
     fiber_index_t acquireFreeFiber();
-    counter_index_t acquireFreeCounter();
+    counter_handle_t acquireFreeCounter();
 
     void yieldToFiber(fiber_index_t target_fiber, fiber_destination_e own_destination);
     void cleanUpPrevFiber();

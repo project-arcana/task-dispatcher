@@ -11,15 +11,15 @@ void td::scheduler_config::ceil_to_pow2()
 
 bool td::scheduler_config::is_valid() const
 {
-    auto const is_positive = [](auto v) -> bool { return v > 0; };
+    auto f_is_positive = [](auto v) -> bool { return v > 0; };
 
     bool valid = true;
 
     // Greater than zero
-    valid &= is_positive(num_fibers);
-    valid &= is_positive(num_threads);
-    valid &= is_positive(max_num_counters);
-    valid &= is_positive(max_num_tasks);
+    valid &= f_is_positive(num_fibers);
+    valid &= f_is_positive(num_threads);
+    valid &= f_is_positive(max_num_counters);
+    valid &= f_is_positive(max_num_tasks);
 
     // Powers of 2
     valid &= cc::is_pow2(num_fibers);
