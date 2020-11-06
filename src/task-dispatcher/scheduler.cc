@@ -493,7 +493,9 @@ bool td::Scheduler::counterAddWaitingFiber(td::Scheduler::atomic_counter_t& coun
         bool expected = true;
         if (!std::atomic_compare_exchange_strong_explicit(&counter.free_waiting_slots[i], &expected, false, //
                                                           std::memory_order_seq_cst, std::memory_order_relaxed))
+        {
             continue;
+        }
 
         atomic_counter_t::waiting_fiber_t& slot = counter.waiting_fibers[i];
         slot.fiber_index = fiber_index;
@@ -502,16 +504,18 @@ bool td::Scheduler::counterAddWaitingFiber(td::Scheduler::atomic_counter_t& coun
         slot.in_use.store(false);
 
         // Check if already done
-        auto counter_val = counter.count.load(std::memory_order_relaxed);
+        int const counter_val = counter.count.load(std::memory_order_relaxed);
         if (slot.in_use.load(std::memory_order_acquire))
             return false;
 
-        if (slot.counter_target == counter_val)
+        if (counter_target == counter_val)
         {
             expected = false;
             if (!std::atomic_compare_exchange_strong_explicit(&slot.in_use, &expected, true, //
                                                               std::memory_order_seq_cst, std::memory_order_relaxed))
+            {
                 return false;
+            }
 
             counter.free_waiting_slots[i].store(true, std::memory_order_release);
             return true;
@@ -586,6 +590,7 @@ void td::Scheduler::counterCheckWaitingFibers(td::Scheduler::atomic_counter_t& c
 
 void td::Scheduler::counterIncrement(td::Scheduler::atomic_counter_t& counter, int amount)
 {
+    CC_ASSERT(amount != 0 && "invalid counter increment value");
     auto previous = counter.count.fetch_add(amount);
     counterCheckWaitingFibers(counter, previous + amount);
 }
@@ -609,25 +614,43 @@ td::Scheduler::Scheduler(scheduler_config const& config)
 
 td::Scheduler::~Scheduler() { delete mEventWorkAvailable; }
 
-void td::Scheduler::submitTasks(td::container::task* tasks, unsigned num_tasks, td::sync& sync)
+td::counter_handle_t td::Scheduler::acquireCounterHandle()
 {
-    counter_index_t counter_index;
-    if (sync.initialized)
+    auto const new_counter_index = acquireFreeCounter();
+    auto const new_handle = mCounterHandles.acquire(new_counter_index);
+    return new_handle;
+}
+
+int td::Scheduler::releaseCounter(td::counter_handle_t handle)
+{
+    CC_RUNTIME_ASSERT(!mCounterHandles.isExpired(handle) && "released expired sync, increase Scheduler::max_handles_in_flight");
+    auto const counter_index = mCounterHandles.get(handle);
+    int const last_state = mCounters[counter_index].count.load(std::memory_order_acquire);
+
+    mFreeCounters.enqueue(counter_index);
+    return last_state;
+}
+
+bool td::Scheduler::releaseCounterIfOnTarget(td::counter_handle_t handle, int target)
+{
+    CC_RUNTIME_ASSERT(!mCounterHandles.isExpired(handle) && "released expired sync, increase Scheduler::max_handles_in_flight");
+    auto const counter_index = mCounterHandles.get(handle);
+
+    int expected = target;
+    bool const cas_success = mCounters[counter_index].count.compare_exchange_strong(expected, 0);
+
+    if (cas_success)
     {
-        // Initialized handle, read its counter index
-        CC_RUNTIME_ASSERT(!mCounterHandles.isExpired(sync.handle)
-                          && "Attempted to run tasks using an expired sync, consider increasing "
-                             "Scheduler::max_handles_in_flight");
-        counter_index = mCounterHandles.get(sync.handle);
-    }
-    else
-    {
-        // Unitialized handle, acquire a free counter and link it to the handle
-        counter_index = acquireFreeCounter();
-        sync.handle = mCounterHandles.acquire(counter_index);
-        sync.initialized = true;
+        mFreeCounters.enqueue(counter_index);
     }
 
+    return cas_success;
+}
+
+void td::Scheduler::submitTasks(td::container::task* tasks, unsigned num_tasks, counter_handle_t sync)
+{
+    CC_RUNTIME_ASSERT(!mCounterHandles.isExpired(sync) && "submitted tasks on an expired sync, increase Scheduler::max_handles_in_flight");
+    counter_index_t const counter_index = mCounterHandles.get(sync);
     counterIncrement(mCounters[counter_index], int(num_tasks));
 
     // TODO: Multi-enqueue
@@ -648,19 +671,12 @@ void td::Scheduler::submitTasks(td::container::task* tasks, unsigned num_tasks, 
     CC_RUNTIME_ASSERT(success && "Task queue is full, consider increasing config.max_num_tasks");
 }
 
-void td::Scheduler::wait(td::sync& sync, bool pinnned, int target)
+void td::Scheduler::wait(counter_handle_t sync, bool pinnned, int target)
 {
-    // Skip uninitialized sync handles
-    if (!sync.initialized)
-    {
-        //        KW_LOG_DIAG("[wait] Waiting on uninitialized sync, resuming immediately");
-        return;
-    }
+    CC_ASSERT(target >= 0 && "sync counter target must not be negative");
 
-    CC_RUNTIME_ASSERT(!mCounterHandles.isExpired(sync.handle) && "Attempted to wait on an expired sync, consider increasing scheduler::max_handles_in_flight");
-    CC_ASSERT(target >= 0 && "Negative counter target");
-
-    auto const counter_index = mCounterHandles.get(sync.handle);
+    CC_RUNTIME_ASSERT(!mCounterHandles.isExpired(sync) && "waited on an expired sync, increase Scheduler::max_handles_in_flight");
+    auto const counter_index = mCounterHandles.get(sync);
 
     // The current fiber is now waiting, but not yet cleaned up
     mFibers[s_tls.current_fiber_index].is_waiting_cleaned_up.store(false, std::memory_order_release);
@@ -679,56 +695,23 @@ void td::Scheduler::wait(td::sync& sync, bool pinnned, int target)
 
     // Either the counter was already on target, or this fiber has been awakened because it is now on target,
     // return execution
-
-    // If the counter has reached zero, free it for re-use and de-initialize the sync handle
-    if (mCounters[counter_index].count.load(std::memory_order_acquire) == 0)
-    {
-        mFreeCounters.enqueue(counter_index);
-        sync.initialized = false;
-    }
 }
 
-void td::Scheduler::incrementSync(td::sync& sync, unsigned amount)
+void td::Scheduler::incrementCounter(counter_handle_t sync, unsigned amount)
 {
-    counter_index_t counter_index;
-    if (sync.initialized)
-    {
-        // Initialized handle, read its counter index
-        CC_RUNTIME_ASSERT(!mCounterHandles.isExpired(sync.handle)
-                          && "Attempted to run tasks using an expired sync, consider increasing "
-                             "Scheduler::max_handles_in_flight");
-        counter_index = mCounterHandles.get(sync.handle);
-    }
-    else
-    {
-        // Unitialized handle, acquire a free counter and link it to the handle
-        counter_index = acquireFreeCounter();
-        sync.handle = mCounterHandles.acquire(counter_index);
-        sync.initialized = true;
-    }
+    CC_RUNTIME_ASSERT(!mCounterHandles.isExpired(sync) && "incremented an expired sync, increase Scheduler::max_handles_in_flight");
+    counter_index_t counter_index = mCounterHandles.get(sync);
 
     counterIncrement(mCounters[counter_index], int(amount));
 }
 
-void td::Scheduler::decrementSync(td::sync& sync, unsigned amount)
+void td::Scheduler::decrementCounter(counter_handle_t sync, unsigned amount)
 {
-    // skip uninitialized sync handles
-    if (!sync.initialized)
-    {
-        return;
-    }
-
-    auto const counter_index = mCounterHandles.get(sync.handle);
+    CC_RUNTIME_ASSERT(!mCounterHandles.isExpired(sync) && "decremented an expired sync, increase Scheduler::max_handles_in_flight");
+    auto const counter_index = mCounterHandles.get(sync);
 
     // re-enqueue all waiting tasks as resumable
     counterIncrement(mCounters[counter_index], -1 * int(amount));
-
-    // if the counter has reached zero, free it for re-use and de-initialize the sync handle
-    if (mCounters[counter_index].count.load(std::memory_order_acquire) == 0)
-    {
-        mFreeCounters.enqueue(counter_index);
-        sync.initialized = false;
-    }
 }
 
 unsigned td::Scheduler::CurrentThreadIndex() { return s_tls.thread_index; }

@@ -73,18 +73,29 @@ public:
     /// Launch the scheduler with the given main task
     void start(container::task main_task);
 
+    /// acquire a sync object
+    [[nodiscard]] counter_handle_t acquireCounterHandle();
+
+    /// release a sync object
+    /// returns the last counter state
+    int releaseCounter(counter_handle_t handle);
+
+    /// release a sync object if a target is reached
+    /// returns true if the release succeeded
+    [[nodiscard]] bool releaseCounterIfOnTarget(counter_handle_t handle, int target);
+
     /// Enqueue the given tasks and associate them with a sync object
-    void submitTasks(container::task* tasks, unsigned num_tasks, td::sync& sync);
+    void submitTasks(container::task* tasks, unsigned num_tasks, counter_handle_t sync);
 
     /// Resume execution after the given sync object has reached a set target
-    void wait(td::sync& sync, bool pinnned = false, int target = 0);
+    void wait(counter_handle_t sync, bool pinnned = false, int target = 0);
 
     /// experimental: manually increment a sync object, preventing waits to resolve
-    void incrementSync(td::sync& sync, unsigned amount = 1);
+    void incrementCounter(counter_handle_t sync, unsigned amount = 1);
 
     /// experimental: manually decrement a sync object, potentially causing waits on it to resolve
     /// WARNING: this should not be called without prior calls to incrementSync
-    void decrementSync(td::sync& sync, unsigned amount = 1);
+    void decrementCounter(counter_handle_t sync, unsigned amount = 1);
 
     /// Returns the amount of threads this scheduler controls
     [[nodiscard]] unsigned getNumThreads() const { return unsigned(mThreads.size()); }
