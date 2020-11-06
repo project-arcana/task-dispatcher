@@ -200,7 +200,7 @@ template <class... STs>
 
 
 // ==========
-// Experimental API - operation on counter handles
+// Experimental API - operation on counter handles without automatic sync management
 
 namespace experimental
 {
