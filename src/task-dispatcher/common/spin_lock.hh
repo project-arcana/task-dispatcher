@@ -8,30 +8,43 @@
 
 namespace td
 {
-// test-and-test-and-set spinlock with SSE2 PAUSE
+/// TTAS Spinlock
 struct SpinLock
 {
 public:
     SpinLock() = default;
     ~SpinLock() = default;
 
-    CC_FORCE_INLINE void lock()
+    CC_FORCE_INLINE void lock() noexcept
     {
-        do
+        while (true)
         {
-            wait_until_unlocked();
-        } while (mIsLocked.exchange(true, std::memory_order_acquire) == true);
-    }
+            // immediately try to exchange
+            // memory order: locking acquires, unlocking releases
+            if (mIsLocked.exchange(true, std::memory_order_acquire) == false)
+            {
+                // exhange returned false, meaning the lock was previously unlocked, success
+                return;
+            }
 
-    CC_FORCE_INLINE void wait_until_unlocked()
-    {
-        while (mIsLocked.load(std::memory_order_relaxed) == true)
-        {
-            _mm_pause();
+            // exchange failed, wait until the value is false without forcing cache misses
+            while (mIsLocked.load(std::memory_order_relaxed))
+            {
+                // x86 PAUSE to signal spin-wait, improve interleaving
+                _mm_pause();
+            }
         }
     }
 
-    CC_FORCE_INLINE void unlock()
+    CC_FORCE_INLINE bool try_lock() noexcept
+    {
+        // early out using a relaxed load to improve performance when spinning on try_lock()
+        // ref: https://rigtorp.se/spinlock/
+        return !mIsLocked.load(std::memory_order_relaxed) //
+               && !mIsLocked.exchange(true, std::memory_order_acquire);
+    }
+
+    CC_FORCE_INLINE void unlock() noexcept
     {
         // release
         mIsLocked.store(false, std::memory_order_release);
@@ -46,6 +59,7 @@ private:
     std::atomic_bool mIsLocked = {false};
 };
 
+/// Simple replacement for std::lock_guard
 template <typename T>
 class LockGuard
 {
