@@ -83,10 +83,9 @@ inline void submit_raw(sync& sync, container::task* tasks, unsigned num)
 {
     CC_ASSERT(td::is_scheduler_alive() && "attempted submit outside of live scheduler");
 
-    if (!sync.initialized)
+    if (!sync.handle.is_valid())
     {
         sync.handle = td::Scheduler::Current().acquireCounterHandle();
-        sync.initialized = true;
     }
 
     td::Scheduler::Current().submitTasks(tasks, num, sync.handle);
@@ -156,7 +155,7 @@ namespace detail
 {
 inline int single_wait_for(sync& sync, bool pinned)
 {
-    if (!sync.initialized)
+    if (!sync.handle.is_valid())
     {
         // return immediately for uninitialized syncs
         return 0;
@@ -169,7 +168,7 @@ inline int single_wait_for(sync& sync, bool pinned)
     if (Scheduler::Current().releaseCounterIfOnTarget(sync.handle, 0))
     {
         // mark as uninitialized
-        sync.initialized = false;
+        sync.handle = handle::null_counter;
     }
 
     return res;
@@ -205,13 +204,13 @@ template <class... STs>
 namespace experimental
 {
 /// manually create a counter handle
-[[nodiscard]] inline counter_handle_t acquire_counter() { return Scheduler::Current().acquireCounterHandle(); }
+[[nodiscard]] inline handle::counter acquire_counter() { return Scheduler::Current().acquireCounterHandle(); }
 
 /// manually release a counter handle, returns last counter
-inline int release_counter(counter_handle_t handle) { return Scheduler::Current().releaseCounter(handle); }
+inline int release_counter(handle::counter handle) { return Scheduler::Current().releaseCounter(handle); }
 
 /// manually release a counter handle if it reached a set target
-[[nodiscard]] inline bool release_counter_if_on_target(counter_handle_t handle, int target)
+[[nodiscard]] inline bool release_counter_if_on_target(handle::counter handle, int target)
 {
     return Scheduler::Current().releaseCounterIfOnTarget(handle, target);
 }
@@ -219,24 +218,24 @@ inline int release_counter(counter_handle_t handle) { return Scheduler::Current(
 /// experimental: manually increment a sync object, preventing waits on it to resolve
 /// normally, a sync is incremented by 1 for every task submitted on it
 /// WARNING: without subsequent calls to decrement_sync, this will deadlock wait-calls on the sync
-inline void increment_counter(counter_handle_t handle, unsigned amount = 1) { Scheduler::Current().incrementCounter(handle, amount); }
+inline void increment_counter(handle::counter handle, unsigned amount = 1) { Scheduler::Current().incrementCounter(handle, amount); }
 
 
 /// experimental: manually decrement a sync object, potentially causing waits on it to resolve
 /// normally, a sync is decremented once a task submitted on it is finished
 /// WARNING: without previous calls to increment_sync, this will cause wait-calls to resolve before all tasks have finished
-inline void decrement_counter(counter_handle_t handle, unsigned amount = 1) { Scheduler::Current().decrementCounter(handle, amount); }
+inline void decrement_counter(handle::counter handle, unsigned amount = 1) { Scheduler::Current().decrementCounter(handle, amount); }
 
 /// waits on a counter, returns it's value before the wait
-inline int wait_for_counter(counter_handle_t handle, bool pinned, int target = 0) { return Scheduler::Current().wait(handle, pinned, target); }
+inline int wait_for_counter(handle::counter handle, bool pinned, int target = 0) { return Scheduler::Current().wait(handle, pinned, target); }
 
-inline void submit_on_counter(counter_handle_t handle, container::task* tasks, unsigned num)
+inline void submit_on_counter(handle::counter handle, container::task* tasks, unsigned num)
 {
     td::Scheduler::Current().submitTasks(tasks, num, handle);
 }
 
 template <class F, cc::enable_if<std::is_invocable_r_v<void, F>> = true>
-void submit_lambda_on_counter(counter_handle_t handle, F&& func)
+void submit_lambda_on_counter(handle::counter handle, F&& func)
 {
     static_assert(std::is_invocable_v<F>, "function must be invocable without arguments");
     static_assert(std::is_invocable_r_v<void, F>, "return must be void");

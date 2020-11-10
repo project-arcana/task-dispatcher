@@ -263,8 +263,8 @@ struct Scheduler::callback_funcs
                 counter_index_t const associated_counter = task.get_metadata();
                 if (associated_counter != invalid_counter)
                 {
-                    counter_handle_t const reconstructed_handle = scheduler->mCounters.unsafe_construct_handle_for_index(associated_counter);
-                    scheduler->counterIncrement(scheduler->mCounters.get(reconstructed_handle), -1);
+                    td::handle::counter const reconstructed_handle = scheduler->mCounters.unsafe_construct_handle_for_index(associated_counter);
+                    scheduler->counterIncrement(scheduler->mCounters.get(reconstructed_handle._value), -1);
                 }
             }
             else
@@ -357,13 +357,6 @@ td::Scheduler::fiber_index_t td::Scheduler::acquireFreeFiber()
             }
         }
     }
-}
-
-td::counter_handle_t td::Scheduler::acquireFreeCounter()
-{
-    auto const res = mCounters.acquire();
-    mCounters.get(res).reset();
-    return res;
 }
 
 void td::Scheduler::yieldToFiber(td::Scheduler::fiber_index_t target_fiber, td::Scheduler::fiber_destination_e own_destination)
@@ -641,40 +634,45 @@ td::Scheduler::Scheduler(scheduler_config const& config)
 
 td::Scheduler::~Scheduler() { delete mEventWorkAvailable; }
 
-td::counter_handle_t td::Scheduler::acquireCounterHandle() { return acquireFreeCounter(); }
-
-int td::Scheduler::releaseCounter(td::counter_handle_t handle)
+td::handle::counter td::Scheduler::acquireCounterHandle()
 {
-    int const last_state = mCounters.get(handle).count.load(std::memory_order_acquire);
-    mCounters.release(handle);
+    auto const res = mCounters.acquire();
+    mCounters.get(res).reset();
+    return {res};
+}
+
+int td::Scheduler::releaseCounter(handle::counter c)
+{
+    int const last_state = mCounters.get(c._value).count.load(std::memory_order_acquire);
+    mCounters.release(c._value);
 
     return last_state;
 }
 
-bool td::Scheduler::releaseCounterIfOnTarget(td::counter_handle_t handle, int target)
+bool td::Scheduler::releaseCounterIfOnTarget(handle::counter c, int target)
 {
     int expected = target;
-    bool const cas_success = mCounters.get(handle).count.compare_exchange_strong(expected, 0);
+    bool const cas_success = mCounters.get(c._value).count.compare_exchange_strong(expected, 0);
 
     if (cas_success)
     {
-        mCounters.release(handle);
+        mCounters.release(c._value);
     }
 
     return cas_success;
 }
 
-void td::Scheduler::submitTasks(td::container::task* tasks, unsigned num_tasks, counter_handle_t handle)
+void td::Scheduler::submitTasks(td::container::task* tasks, unsigned num_tasks, handle::counter c)
 {
-    counterIncrement(mCounters.get(handle), int(num_tasks));
-    counter_index_t const counter_index = counter_index_t(mCounters.get_handle_index(handle));
+    counterIncrement(mCounters.get(c._value), int(num_tasks));
+    counter_index_t const counter_index = counter_index_t(mCounters.get_handle_index(c._value));
 
     enqueueTasks(tasks, num_tasks, counter_index);
 }
 
 void td::Scheduler::submitTasksWithoutCounter(td::container::task* tasks, unsigned num_tasks) { enqueueTasks(tasks, num_tasks, invalid_counter); }
 
-int td::Scheduler::wait(counter_handle_t handle, bool pinnned, int target)
+int td::Scheduler::wait(handle::counter c, bool pinnned, int target)
 {
     CC_ASSERT(target >= 0 && "sync counter target must not be negative");
 
@@ -683,7 +681,7 @@ int td::Scheduler::wait(counter_handle_t handle, bool pinnned, int target)
 
     int current_counter_value = 0;
 
-    if (counterAddWaitingFiber(mCounters.get(handle), s_tls.current_fiber_index, pinnned ? s_tls.thread_index : invalid_thread, target, current_counter_value))
+    if (counterAddWaitingFiber(mCounters.get(c._value), s_tls.current_fiber_index, pinnned ? s_tls.thread_index : invalid_thread, target, current_counter_value))
     {
         // Already done
     }
@@ -699,12 +697,12 @@ int td::Scheduler::wait(counter_handle_t handle, bool pinnned, int target)
     return current_counter_value;
 }
 
-void td::Scheduler::incrementCounter(counter_handle_t handle, unsigned amount) { counterIncrement(mCounters.get(handle), int(amount)); }
+void td::Scheduler::incrementCounter(handle::counter c, unsigned amount) { counterIncrement(mCounters.get(c._value), int(amount)); }
 
-void td::Scheduler::decrementCounter(counter_handle_t handle, unsigned amount)
+void td::Scheduler::decrementCounter(handle::counter c, unsigned amount)
 {
     // re-enqueue all waiting tasks as resumable
-    counterIncrement(mCounters.get(handle), -1 * int(amount));
+    counterIncrement(mCounters.get(c._value), -1 * int(amount));
 }
 
 unsigned td::Scheduler::CurrentThreadIndex() { return s_tls.thread_index; }

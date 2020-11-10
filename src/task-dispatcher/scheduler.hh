@@ -74,32 +74,32 @@ public:
     void start(container::task main_task);
 
     /// acquire a counter
-    [[nodiscard]] counter_handle_t acquireCounterHandle();
+    [[nodiscard]] handle::counter acquireCounterHandle();
 
     /// release a counter
     /// returns the last counter state
-    int releaseCounter(counter_handle_t handle);
+    int releaseCounter(handle::counter c);
 
     /// release a counter if a target is reached
     /// returns true if the release succeeded
-    [[nodiscard]] bool releaseCounterIfOnTarget(counter_handle_t handle, int target);
+    [[nodiscard]] bool releaseCounterIfOnTarget(handle::counter c, int target);
 
     /// Enqueue the given tasks and associate them with a counter object
-    void submitTasks(container::task* tasks, unsigned num_tasks, counter_handle_t handle);
+    void submitTasks(container::task* tasks, unsigned num_tasks, handle::counter c);
 
     /// Enqueue the given tasks - will eventually finish, but no way to wait on them
     void submitTasksWithoutCounter(container::task* tasks, unsigned num_tasks);
 
     /// Resume execution after the given counter has reached a set target
     /// returns the counter value before the wait
-    int wait(counter_handle_t handle, bool pinnned = false, int target = 0);
+    int wait(handle::counter c, bool pinnned = false, int target = 0);
 
     /// experimental: manually increment a counter, preventing waits to resolve
-    void incrementCounter(counter_handle_t handle, unsigned amount = 1);
+    void incrementCounter(handle::counter c, unsigned amount = 1);
 
     /// experimental: manually decrement a counter, potentially causing waits on it to resolve
     /// WARNING: this should not be called without prior calls to incrementCounter
-    void decrementCounter(counter_handle_t handle, unsigned amount = 1);
+    void decrementCounter(handle::counter c, unsigned amount = 1);
 
     /// Returns the amount of threads this scheduler controls
     [[nodiscard]] unsigned getNumThreads() const { return unsigned(mThreads.size()); }
@@ -156,7 +156,6 @@ private:
 
 private:
     fiber_index_t acquireFreeFiber();
-    counter_handle_t acquireFreeCounter();
 
     void yieldToFiber(fiber_index_t target_fiber, fiber_destination_e own_destination);
     void cleanUpPrevFiber();
