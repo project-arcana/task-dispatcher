@@ -4,9 +4,9 @@
 
 #include <clean-core/fwd_array.hh>
 #include <clean-core/typedefs.hh>
+#include <clean-core/atomic_linked_pool.hh>
 
 #include <task-dispatcher/common/system_info.hh>
-#include <task-dispatcher/container/linked_pool.hh>
 #include <task-dispatcher/container/mpmc_queue.hh>
 #include <task-dispatcher/container/task.hh>
 #include <task-dispatcher/sync.hh>
@@ -139,7 +139,7 @@ private:
 
     cc::fwd_array<worker_thread_t> mThreads;
     cc::fwd_array<worker_fiber_t> mFibers;
-    container::linked_pool<atomic_counter_t> mCounters;
+    cc::atomic_linked_pool<atomic_counter_t> mCounters;
 
     // Queues
     container::MPMCQueue<container::task> mTasks;
