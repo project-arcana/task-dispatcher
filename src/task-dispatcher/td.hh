@@ -1,14 +1,14 @@
 #pragma once
 
-#include <tuple> // TODO: Replace with cc::tuple
-
 #include <clean-core/alloc_array.hh>
+#include <clean-core/apply.hh>
 #include <clean-core/assert.hh>
 #include <clean-core/bits.hh>
 #include <clean-core/enable_if.hh>
 #include <clean-core/forward.hh>
 #include <clean-core/move.hh>
 #include <clean-core/span.hh>
+#include <clean-core/tuple.hh>
 #include <clean-core/unique_ptr.hh>
 #include <clean-core/utility.hh>
 
@@ -49,24 +49,22 @@ public:
     ~future()
     {
         // Enforce sync guarantee
-        if (_sync.initialized)
-            td::wait_for(_sync);
+        td::wait_for(_sync);
     }
 
     future(future&) = delete;
     future& operator=(future&) = delete;
 
-    future(future&& rhs) noexcept : _sync(rhs._sync), _value(cc::move(rhs._value)) { rhs._sync.initialized = false; }
+    future(future&& rhs) noexcept : _sync(rhs._sync), _value(cc::move(rhs._value)) { rhs._sync.handle.invalidate(); }
     future& operator=(future&& rhs) noexcept
     {
         if (this != &rhs)
         {
-            if (_sync.initialized)
-                td::wait_for(_sync);
+            td::wait_for(_sync);
 
             _sync = rhs._sync;
             _value = cc::move(rhs._value);
-            rhs._sync.initialized = false;
+            rhs._sync.handle.invalidate();
         }
         return *this;
     }
@@ -87,8 +85,7 @@ void submit(sync& s, F&& fun, Args&&... args)
     static_assert(std::is_invocable_v<F, Args...>, "function must be invocable with the given args");
     static_assert(std::is_same_v<std::invoke_result_t<F, Args...>, void>, "return must be void");
     // A lambda callung fun(args...), but moving the args instead of copying them into the lambda
-    container::task dispatch(
-        [fun, tup = std::make_tuple(cc::move(args)...)] { std::apply([&fun](auto&&... args) { fun(decltype(args)(args)...); }, tup); });
+    container::task dispatch([fun, tup = cc::tuple(cc::move(args)...)] { cc::apply([&fun](auto&&... args) { fun(decltype(args)(args)...); }, tup); });
     submit_raw(s, &dispatch, 1);
 }
 
@@ -100,8 +97,8 @@ void submit(sync& s, F func, FObj& inst, Args&&... args)
     static_assert(std::is_invocable_v<F, FObj, Args...>, "function must be invocable with the given args");
     static_assert(std::is_same_v<std::invoke_result_t<F, FObj, Args...>, void>, "return must be void");
     // A lambda calling fun(args...), but moving the args instead of copying them into the lambda
-    container::task dispatch([func, inst_ptr = &inst, tup = std::make_tuple(cc::move(args)...)] {
-        std::apply([&func, &inst_ptr](auto&&... args) { (inst_ptr->*func)(decltype(args)(args)...); }, tup);
+    container::task dispatch([func, inst_ptr = &inst, tup = cc::tuple(cc::move(args)...)] {
+        cc::apply([&func, &inst_ptr](auto&&... args) { (inst_ptr->*func)(decltype(args)(args)...); }, tup);
     });
 
     submit_raw(s, &dispatch, 1);
@@ -239,8 +236,8 @@ template <class F, class FObj, class... Args, cc::enable_if<std::is_member_funct
         sync res;
 
         // A lambda calling fun(args...), but moving the args instead of copying them into the lambda
-        container::task dispatch([func, inst_ptr = &inst, tup = std::make_tuple(cc::move(args)...)] {
-            std::apply([&func, &inst_ptr](auto&&... args) { (inst_ptr->*func)(decltype(args)(args)...); }, tup);
+        container::task dispatch([func, inst_ptr = &inst, tup = cc::tuple(cc::move(args)...)] {
+            cc::apply([&func, &inst_ptr](auto&&... args) { (inst_ptr->*func)(decltype(args)(args)...); }, tup);
         });
 
         submit_raw(res, &dispatch, 1);
@@ -253,8 +250,8 @@ template <class F, class FObj, class... Args, cc::enable_if<std::is_member_funct
         R* const result_ptr = res.get_raw_pointer();
 
         // A lambda calling fun(args...), but moving the args instead of copying them into the lambda
-        container::task dispatch([func, inst_ptr = &inst, result_ptr, tup = std::make_tuple(cc::move(args)...)] {
-            std::apply([&func, &inst_ptr, &result_ptr](auto&&... args) { *result_ptr = (inst_ptr->*func)(decltype(args)(args)...); }, tup);
+        container::task dispatch([func, inst_ptr = &inst, result_ptr, tup = cc::tuple(cc::move(args)...)] {
+            cc::apply([&func, &inst_ptr, &result_ptr](auto&&... args) { *result_ptr = (inst_ptr->*func)(decltype(args)(args)...); }, tup);
         });
 
         submit_raw(s, &dispatch, 1);
@@ -276,7 +273,7 @@ template <class F, class... Args, cc::enable_if<std::is_invocable_v<F, Args...> 
 
         // A lambda callung fun(args...), but moving the args instead of copying them into the lambda
         container::task dispatch(
-            [fun, tup = std::make_tuple(cc::move(args)...)] { std::apply([&fun](auto&&... args) { fun(decltype(args)(args)...); }, tup); });
+            [fun, tup = cc::tuple(cc::move(args)...)] { cc::apply([&fun](auto&&... args) { fun(decltype(args)(args)...); }, tup); });
 
         submit_raw(res, &dispatch, 1);
         return res;
@@ -288,8 +285,8 @@ template <class F, class... Args, cc::enable_if<std::is_invocable_v<F, Args...> 
         R* const result_ptr = res.get_raw_pointer();
 
         // A lambda callung fun(args...), but moving the args instead of copying them into the lambda
-        container::task dispatch([fun, result_ptr, tup = std::make_tuple(cc::move(args)...)] {
-            std::apply([&fun, &result_ptr](auto&&... args) { *result_ptr = fun(decltype(args)(args)...); }, tup);
+        container::task dispatch([fun, result_ptr, tup = cc::tuple(cc::move(args)...)] {
+            cc::apply([&fun, &result_ptr](auto&&... args) { *result_ptr = fun(decltype(args)(args)...); }, tup);
         });
 
         submit_raw(s, &dispatch, 1);
