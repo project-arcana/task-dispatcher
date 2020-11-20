@@ -204,7 +204,11 @@ template <class... STs>
 namespace experimental
 {
 /// manually create a counter handle
-[[nodiscard]] inline handle::counter acquire_counter() { return Scheduler::Current().acquireCounterHandle(); }
+[[nodiscard]] inline handle::counter acquire_counter()
+{
+    CC_ASSERT(is_scheduler_alive() && "scheduler not alive");
+    return Scheduler::Current().acquireCounterHandle();
+}
 
 /// manually release a counter handle, returns last counter
 inline int release_counter(handle::counter handle) { return Scheduler::Current().releaseCounter(handle); }
@@ -231,6 +235,7 @@ inline int wait_for_counter(handle::counter handle, bool pinned, int target = 0)
 
 inline void submit_on_counter(handle::counter handle, container::task* tasks, unsigned num)
 {
+    CC_ASSERT(is_scheduler_alive() && "scheduler not alive");
     td::Scheduler::Current().submitTasks(tasks, num, handle);
 }
 
