@@ -2,9 +2,9 @@
 
 #include <atomic>
 
+#include <clean-core/atomic_linked_pool.hh>
 #include <clean-core/fwd_array.hh>
 #include <clean-core/typedefs.hh>
-#include <clean-core/atomic_linked_pool.hh>
 
 #include <task-dispatcher/common/system_info.hh>
 #include <task-dispatcher/container/mpmc_queue.hh>
@@ -95,11 +95,13 @@ public:
     int wait(handle::counter c, bool pinnned = false, int target = 0);
 
     /// experimental: manually increment a counter, preventing waits to resolve
-    void incrementCounter(handle::counter c, unsigned amount = 1);
+    /// returns the new counter state
+    int incrementCounter(handle::counter c, unsigned amount = 1);
 
     /// experimental: manually decrement a counter, potentially causing waits on it to resolve
     /// WARNING: this should not be called without prior calls to incrementCounter
-    void decrementCounter(handle::counter c, unsigned amount = 1);
+    /// returns the new counter state
+    int decrementCounter(handle::counter c, unsigned amount = 1);
 
     /// Returns the amount of threads this scheduler controls
     [[nodiscard]] unsigned getNumThreads() const { return unsigned(mThreads.size()); }
@@ -166,7 +168,7 @@ private:
     bool counterAddWaitingFiber(atomic_counter_t& counter, fiber_index_t fiber_index, thread_index_t pinned_thread_index, int counter_target, int& out_current_counter_value);
     void counterCheckWaitingFibers(atomic_counter_t& counter, int value);
 
-    void counterIncrement(atomic_counter_t& counter, int amount = 1);
+    int counterIncrement(atomic_counter_t& counter, int amount = 1);
 
     bool enqueueTasks(td::container::task* tasks, unsigned num_tasks, counter_index_t counter_i);
 

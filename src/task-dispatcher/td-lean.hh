@@ -222,13 +222,15 @@ inline int release_counter(handle::counter handle) { return Scheduler::Current()
 /// experimental: manually increment a sync object, preventing waits on it to resolve
 /// normally, a sync is incremented by 1 for every task submitted on it
 /// WARNING: without subsequent calls to decrement_sync, this will deadlock wait-calls on the sync
-inline void increment_counter(handle::counter handle, unsigned amount = 1) { Scheduler::Current().incrementCounter(handle, amount); }
+/// returns the new counter value
+inline int increment_counter(handle::counter handle, unsigned amount = 1) { return Scheduler::Current().incrementCounter(handle, amount); }
 
 
 /// experimental: manually decrement a sync object, potentially causing waits on it to resolve
 /// normally, a sync is decremented once a task submitted on it is finished
 /// WARNING: without previous calls to increment_sync, this will cause wait-calls to resolve before all tasks have finished
-inline void decrement_counter(handle::counter handle, unsigned amount = 1) { Scheduler::Current().decrementCounter(handle, amount); }
+/// returns the new counter value
+inline int decrement_counter(handle::counter handle, unsigned amount = 1) { return Scheduler::Current().decrementCounter(handle, amount); }
 
 /// waits on a counter, returns it's value before the wait
 inline int wait_for_counter(handle::counter handle, bool pinned, int target = 0) { return Scheduler::Current().wait(handle, pinned, target); }

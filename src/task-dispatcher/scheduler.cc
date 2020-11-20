@@ -587,11 +587,13 @@ void td::Scheduler::counterCheckWaitingFibers(td::Scheduler::atomic_counter_t& c
     }
 }
 
-void td::Scheduler::counterIncrement(td::Scheduler::atomic_counter_t& counter, int amount)
+int td::Scheduler::counterIncrement(td::Scheduler::atomic_counter_t& counter, int amount)
 {
     CC_ASSERT(amount != 0 && "invalid counter increment value");
-    auto previous = counter.count.fetch_add(amount);
-    counterCheckWaitingFibers(counter, previous + amount);
+    auto const previous = counter.count.fetch_add(amount);
+    auto const new_val = previous + amount;
+    counterCheckWaitingFibers(counter, new_val);
+    return new_val;
 }
 
 bool td::Scheduler::enqueueTasks(td::container::task* tasks, unsigned num_tasks, td::Scheduler::counter_index_t counter_i)
@@ -697,12 +699,12 @@ int td::Scheduler::wait(handle::counter c, bool pinnned, int target)
     return current_counter_value;
 }
 
-void td::Scheduler::incrementCounter(handle::counter c, unsigned amount) { counterIncrement(mCounters.get(c._value), int(amount)); }
+int td::Scheduler::incrementCounter(handle::counter c, unsigned amount) { return counterIncrement(mCounters.get(c._value), int(amount)); }
 
-void td::Scheduler::decrementCounter(handle::counter c, unsigned amount)
+int td::Scheduler::decrementCounter(handle::counter c, unsigned amount)
 {
     // re-enqueue all waiting tasks as resumable
-    counterIncrement(mCounters.get(c._value), -1 * int(amount));
+    return counterIncrement(mCounters.get(c._value), -1 * int(amount));
 }
 
 unsigned td::Scheduler::CurrentThreadIndex() { return s_tls.thread_index; }
