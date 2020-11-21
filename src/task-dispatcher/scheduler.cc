@@ -400,14 +400,15 @@ bool td::Scheduler::getNextTask(td::container::task& task)
     // Locally pinned fibers first
     {
         auto& local_thread = mThreads[s_tls.thread_index];
-        fiber_index_t resumable_fiber_index;
-        bool got_resumable;
+        fiber_index_t resumable_fiber_index = invalid_fiber;
+        bool got_resumable = false;
+
         {
-            LockGuard lg(local_thread.pinned_resumable_fibers_lock);
+            auto lg = LockGuard(local_thread.pinned_resumable_fibers_lock);
             got_resumable = local_thread.pinned_resumable_fibers.dequeue(resumable_fiber_index);
         }
 
-        if (got_resumable)
+        if (got_resumable && resumable_fiber_index != invalid_fiber)
         {
             if (tryResumeFiber(resumable_fiber_index))
             {
@@ -417,7 +418,7 @@ bool td::Scheduler::getNextTask(td::container::task& task)
             {
                 // Received fiber is not cleaned up yet, re-enqueue (very rare)
                 {
-                    LockGuard lg(local_thread.pinned_resumable_fibers_lock);
+                    auto lg = LockGuard(local_thread.pinned_resumable_fibers_lock);
                     local_thread.pinned_resumable_fibers.enqueue(resumable_fiber_index);
                 }
 
@@ -574,7 +575,7 @@ void td::Scheduler::counterCheckWaitingFibers(td::Scheduler::atomic_counter_t& c
                 auto& pinned_thread = mThreads[slot.pinned_thread_index];
 
 
-                LockGuard lg(pinned_thread.pinned_resumable_fibers_lock);
+                auto lg = LockGuard(pinned_thread.pinned_resumable_fibers_lock);
                 pinned_thread.pinned_resumable_fibers.enqueue(slot.fiber_index);
             }
 

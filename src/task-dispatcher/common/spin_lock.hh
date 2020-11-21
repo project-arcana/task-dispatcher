@@ -64,7 +64,7 @@ template <typename T>
 class LockGuard
 {
 public:
-    CC_FORCE_INLINE explicit LockGuard(T& mutex) : mMutex(mutex) { mMutex.lock(); }
+    [[nodiscard]] CC_FORCE_INLINE explicit LockGuard(T& mutex) : mMutex(mutex) { mMutex.lock(); }
     CC_FORCE_INLINE ~LockGuard() { mMutex.unlock(); }
 
     LockGuard(const LockGuard&) = delete;
