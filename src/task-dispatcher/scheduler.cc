@@ -234,6 +234,10 @@ struct Scheduler::callback_funcs
         }
 
         native::delete_main_fiber(s_tls.thread_fiber);
+
+        scheduler->sCurrentScheduler = nullptr;
+        s_tls.reset();
+
         native::end_current_thread();
 
         TD_NATIVE_THREAD_FUNC_END;
@@ -408,8 +412,10 @@ bool td::Scheduler::getNextTask(td::container::task& task)
             got_resumable = local_thread.pinned_resumable_fibers.dequeue(resumable_fiber_index);
         }
 
-        if (got_resumable && resumable_fiber_index != invalid_fiber)
+        if (got_resumable)
         {
+            CC_ASSERT(resumable_fiber_index < mFibers.size() && "fatal: received invalid fiber index from resumable queue");
+
             if (tryResumeFiber(resumable_fiber_index))
             {
                 // Successfully resumed (and returned)
@@ -431,9 +437,13 @@ bool td::Scheduler::getNextTask(td::container::task& task)
 
     // Global resumable fibers
     {
-        fiber_index_t resumable_fiber_index;
-        if (mResumableFibers.dequeue(resumable_fiber_index))
+        fiber_index_t resumable_fiber_index = invalid_fiber;
+        bool got_resumable = mResumableFibers.dequeue(resumable_fiber_index);
+
+        if (got_resumable)
         {
+            CC_ASSERT(resumable_fiber_index < mFibers.size() && "fatal: received invalid fiber index from resumable queue");
+
             if (tryResumeFiber(resumable_fiber_index))
             {
                 // Successfully resumed (and returned)
@@ -443,7 +453,8 @@ bool td::Scheduler::getNextTask(td::container::task& task)
                 // Received fiber is not cleaned up yet, re-enqueue (very rare)
                 // This should only happen if mResumableFibers is almost empty, and
                 // the latency impact is low in those cases
-                mResumableFibers.enqueue(resumable_fiber_index);
+                bool const re_enqueue_success = mResumableFibers.enqueue(resumable_fiber_index);
+                CC_ASSERT(re_enqueue_success && "fatal: fiber queue full"); // this should never happen
 
                 // signal the global event
                 native::signal_event(*mEventWorkAvailable);
@@ -462,7 +473,7 @@ bool td::Scheduler::getNextTask(td::container::task& task)
 bool td::Scheduler::tryResumeFiber(td::Scheduler::fiber_index_t fiber)
 {
     bool expected = true;
-    auto const cas_success = std::atomic_compare_exchange_strong_explicit(&mFibers[fiber].is_waiting_cleaned_up, &expected, false, //
+    bool const cas_success = std::atomic_compare_exchange_strong_explicit(&mFibers[fiber].is_waiting_cleaned_up, &expected, false, //
                                                                           std::memory_order_seq_cst, std::memory_order_relaxed);
     if (CC_LIKELY(cas_success))
     {
@@ -484,6 +495,8 @@ bool td::Scheduler::tryResumeFiber(td::Scheduler::fiber_index_t fiber)
 
 bool td::Scheduler::counterAddWaitingFiber(td::Scheduler::atomic_counter_t& counter, fiber_index_t fiber_index, thread_index_t pinned_thread_index, int counter_target, int& out_current_counter_value)
 {
+    CC_ASSERT(fiber_index < mFibers.size() && "attempted to register invalid fiber as waiting");
+
     for (auto i = 0u; i < atomic_counter_t::max_waiting; ++i)
     {
         // Acquire free waiting slot
@@ -560,23 +573,27 @@ void td::Scheduler::counterCheckWaitingFibers(td::Scheduler::atomic_counter_t& c
 
 
             // The waiting fiber is ready, and locked by this thread
+            auto const fiber_index_to_enqueue = slot.fiber_index;
+            CC_ASSERT(fiber_index_to_enqueue < mFibers.size() && "fatal: counter waiting slot has invalid associated fiber");
 
             if (slot.pinned_thread_index == invalid_thread)
             {
                 // The waiting fiber is not pinned to any thread, store it in the global _resumable fibers
-                bool success = mResumableFibers.enqueue(slot.fiber_index);
+                bool success = mResumableFibers.enqueue(fiber_index_to_enqueue);
 
                 // This should never fail, the container is large enough for all fibers in the system
-                CC_ASSERT(success);
+                CC_ASSERT(success && "fatal: resumable fiber queue is full");
             }
             else
             {
                 // The waiting fiber is pinned to a certain thread, store it there
+                CC_ASSERT(slot.pinned_thread_index < mThreads.size() && "fatal: counter waiting slot has invalid pinned thread index");
                 auto& pinned_thread = mThreads[slot.pinned_thread_index];
 
-
-                auto lg = LockGuard(pinned_thread.pinned_resumable_fibers_lock);
-                pinned_thread.pinned_resumable_fibers.enqueue(slot.fiber_index);
+                {
+                    auto lg = LockGuard(pinned_thread.pinned_resumable_fibers_lock);
+                    pinned_thread.pinned_resumable_fibers.enqueue(fiber_index_to_enqueue);
+                }
             }
 
             // signal the global event
@@ -625,7 +642,7 @@ td::Scheduler::Scheduler(scheduler_config const& config)
     mFibers(cc::fwd_array<worker_fiber_t>::defaulted(config.num_fibers)),
     mTasks(config.max_num_tasks),
     mIdleFibers(mFibers.size()),
-    mResumableFibers(mFibers.size()) // TODO: Smaller?
+    mResumableFibers(mFibers.size())
 {
     static_assert(std::is_trivially_destructible_v<Scheduler::atomic_counter_t>, "atomic counter type not trivially destructible");
 
@@ -900,6 +917,7 @@ void td::Scheduler::start(td::container::task main_task)
 
             // Clear sCurrentScheduler
             sCurrentScheduler = nullptr;
+            s_tls.reset();
         }
     }
 
