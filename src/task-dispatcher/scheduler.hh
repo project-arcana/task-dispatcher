@@ -87,12 +87,9 @@ public:
     /// Enqueue the given tasks and associate them with a counter object
     void submitTasks(container::task* tasks, unsigned num_tasks, handle::counter c);
 
-    /// Enqueue the given tasks - will eventually finish, but no way to wait on them
-    void submitTasksWithoutCounter(container::task* tasks, unsigned num_tasks);
-
     /// Resume execution after the given counter has reached a set target
     /// returns the counter value before the wait
-    int wait(handle::counter c, bool pinnned = false, int target = 0);
+    void wait(handle::counter c, bool pinnned = false, int target = 0);
 
     /// experimental: manually increment a counter, preventing waits to resolve
     /// returns the new counter state
@@ -141,12 +138,21 @@ private:
 
     cc::fwd_array<worker_thread_t> mThreads;
     cc::fwd_array<worker_fiber_t> mFibers;
-    cc::atomic_linked_pool<atomic_counter_t> mCounters;
+    cc::fwd_array<atomic_counter_t> mCounters;
 
     // Queues
     container::MPMCQueue<container::task> mTasks;
     container::MPMCQueue<fiber_index_t> mIdleFibers;
     container::MPMCQueue<fiber_index_t> mResumableFibers;
+    container::MPMCQueue<counter_index_t> mFreeCounters;
+
+    struct AtomicCounterHandleContent
+    {
+        counter_index_t counterIndex = invalid_counter;
+        uint32_t pad = 0;
+    };
+
+    cc::atomic_linked_pool<AtomicCounterHandleContent, true> mCounterHandles;
 
     // Worker wakeup event
     native::event_t* mEventWorkAvailable;
@@ -165,7 +171,7 @@ private:
     bool getNextTask(container::task& task);
     bool tryResumeFiber(fiber_index_t fiber);
 
-    bool counterAddWaitingFiber(atomic_counter_t& counter, fiber_index_t fiber_index, thread_index_t pinned_thread_index, int counter_target, int& out_current_counter_value);
+    bool counterAddWaitingFiber(atomic_counter_t& counter, fiber_index_t fiber_index, thread_index_t pinned_thread_index, int counter_target);
     void counterCheckWaitingFibers(atomic_counter_t& counter, int value);
 
     int counterIncrement(atomic_counter_t& counter, int amount = 1);

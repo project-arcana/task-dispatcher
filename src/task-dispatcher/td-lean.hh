@@ -111,27 +111,6 @@ void submit(sync& sync, F&& func)
     submit_raw(sync, &dispatch, 1);
 }
 
-/// submit multiple pre-constructed tasks without a sync
-inline void submit_raw_unsynced(container::task* tasks, unsigned num) { td::Scheduler::Current().submitTasksWithoutCounter(tasks, num); }
-
-/// construct and submit a task without a sync
-/// based on a single "void f()" lambda or function pointer
-template <class F, cc::enable_if<std::is_invocable_r_v<void, F>> = true>
-void submit_unsynced(F&& func)
-{
-    static_assert(std::is_invocable_v<F>, "function must be invocable without arguments");
-    static_assert(std::is_invocable_r_v<void, F>, "return must be void");
-
-    container::task dispatch;
-    if constexpr (std::is_class_v<F>)
-        dispatch.lambda(cc::forward<F>(func));
-    else
-        dispatch.lambda([=] { func(); });
-
-    submit_raw_unsynced(&dispatch, 1);
-}
-
-
 // ==========
 // Submit Tasks - sync return variants
 
@@ -153,16 +132,16 @@ void submit_unsynced(F&& func)
 
 namespace detail
 {
-inline int single_wait_for(sync& sync, bool pinned)
+inline void single_wait_for(sync& sync, bool pinned)
 {
     if (!sync.handle.is_valid())
     {
         // return immediately for uninitialized syncs
-        return 0;
+        return;
     }
 
     // perform real wait
-    int const res = Scheduler::Current().wait(sync.handle, pinned, 0);
+    Scheduler::Current().wait(sync.handle, pinned, 0);
 
     // free the sync if it reached 0
     if (Scheduler::Current().releaseCounterIfOnTarget(sync.handle, 0))
@@ -170,8 +149,6 @@ inline int single_wait_for(sync& sync, bool pinned)
         // mark as uninitialized
         sync.handle = handle::null_counter;
     }
-
-    return res;
 }
 }
 
@@ -179,11 +156,11 @@ inline int single_wait_for(sync& sync, bool pinned)
 // Wait on sync objects
 
 /// waits on a sync object, returns it's value before the call
-inline int wait_for(sync& sync) { return detail::single_wait_for(sync, true); }
+inline void wait_for(sync& sync) { detail::single_wait_for(sync, true); }
 
 /// waits on a sync object, returns it's value before the call
 /// unpinned: can resume execution on a different thread than the calling one
-inline int wait_for_unpinned(sync& sync) { return detail::single_wait_for(sync, false); }
+inline void wait_for_unpinned(sync& sync) { detail::single_wait_for(sync, false); }
 
 template <class... STs>
 [[deprecated("multi-wait overloads will be removed in a future version")]] void wait_for(STs&... syncs)
@@ -230,10 +207,10 @@ inline int increment_counter(handle::counter handle, unsigned amount = 1) { retu
 /// normally, a sync is decremented once a task submitted on it is finished
 /// WARNING: without previous calls to increment_sync, this will cause wait-calls to resolve before all tasks have finished
 /// returns the new counter value
-inline int decrement_counter(handle::counter handle, unsigned amount = 1) { return Scheduler::Current().decrementCounter(handle, amount); }
+inline void decrement_counter(handle::counter handle, unsigned amount = 1) { Scheduler::Current().decrementCounter(handle, amount); }
 
 /// waits on a counter, returns it's value before the wait
-inline int wait_for_counter(handle::counter handle, bool pinned, int target = 0) { return Scheduler::Current().wait(handle, pinned, target); }
+inline void wait_for_counter(handle::counter handle, bool pinned, int target = 0) { Scheduler::Current().wait(handle, pinned, target); }
 
 inline void submit_on_counter(handle::counter handle, container::task* tasks, unsigned num)
 {

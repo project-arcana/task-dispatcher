@@ -50,13 +50,6 @@ constexpr bool const gc_warn_timeouts = false;
 
 // If true, print a warning to stderr if a deadlock is heuristically detected
 constexpr bool const gc_warn_deadlocks = true;
-
-enum class WaitingSlotState : int32_t
-{
-    Empty,
-    Locked,
-    Full
-};
 }
 
 thread_local td::Scheduler* td::Scheduler::sCurrentScheduler = nullptr;
@@ -65,54 +58,30 @@ namespace td
 {
 using resumable_fiber_mpsc_queue = container::FIFOQueue<Scheduler::fiber_index_t, 32>;
 
-struct alignas(64) Scheduler::atomic_counter_t
+struct Scheduler::atomic_counter_t
 {
     struct waiting_fiber_t
     {
-        int32_t counter_target = 0;                          // the counter value that this fiber is waiting for
+        int counter_target = 0;                              // the counter value that this fiber is waiting for
         fiber_index_t fiber_index = invalid_fiber;           // index of the waiting fiber
         thread_index_t pinned_thread_index = invalid_thread; // index of the thread this fiber is pinned to, invalid_thread if unpinned
-
-        bool is_empty() { return state.load(std::memory_order_relaxed) == WaitingSlotState::Empty; }
-
-        bool try_lock_from_empty()
-        {
-            WaitingSlotState expected = WaitingSlotState::Empty;
-            return std::atomic_compare_exchange_strong(&state, &expected, WaitingSlotState::Locked);
-        }
-
-        bool try_lock_from_full()
-        {
-            WaitingSlotState expected = WaitingSlotState::Full;
-            return std::atomic_compare_exchange_strong(&state, &expected, WaitingSlotState::Locked);
-        }
-
-        bool cas_full_to_empty()
-        {
-            WaitingSlotState expected = WaitingSlotState::Full;
-            return std::atomic_compare_exchange_strong(&state, &expected, WaitingSlotState::Empty);
-        }
-
-        void unlock_to_empty()
-        {
-            auto const prevState = state.exchange(WaitingSlotState::Empty);
-            CC_ASSERT(prevState == WaitingSlotState::Locked && "unexpected race on slot state");
-        }
-
-        void unlock_to_full()
-        {
-            auto const prevState = state.exchange(WaitingSlotState::Full);
-            CC_ASSERT(prevState == WaitingSlotState::Locked && "unexpected race on slot state");
-        }
-
-    private:
-        std::atomic<WaitingSlotState> state = {WaitingSlotState::Empty};
+        std::atomic_bool in_use{true};                       // whether this slot in the array is currently being processed
     };
 
-    std::atomic_int count; // The value of this counter
+    std::atomic<int> count; // The value of this counter
 
     static constexpr unsigned max_waiting = 16;
     cc::array<waiting_fiber_t, max_waiting> waiting_fibers = {};
+    cc::array<std::atomic_bool, max_waiting> free_waiting_slots = {};
+
+    // Resets this counter for re-use
+    void reset()
+    {
+        count.store(0, std::memory_order_release);
+
+        for (auto i = 0u; i < max_waiting; ++i)
+            free_waiting_slots[i].store(true);
+    }
 
     friend td::Scheduler;
 };
@@ -244,7 +213,7 @@ struct Scheduler::callback_funcs
         s_tls.thread_index = worker_arg->index;
 
 #ifdef TD_HAS_RICH_LOG
-        rlog::set_current_thread_name("td#%.2u", worker_arg->index);
+        rlog::set_current_thread_name("td#%u", worker_arg->index);
 #endif
 
         // Set up chase lev deques
@@ -265,10 +234,6 @@ struct Scheduler::callback_funcs
         }
 
         native::delete_main_fiber(s_tls.thread_fiber);
-
-        scheduler->sCurrentScheduler = nullptr;
-        s_tls.reset();
-
         native::end_current_thread();
 
         TD_NATIVE_THREAD_FUNC_END;
@@ -294,12 +259,8 @@ struct Scheduler::callback_funcs
                 // Received a task, execute it
                 task.execute_and_cleanup();
 
-                // The task returned, decrement the counter if present
-                auto const associated_counter = handle::counter{task.get_metadata()};
-                if (associated_counter.is_valid())
-                {
-                    scheduler->counterIncrement(scheduler->mCounters.get(associated_counter._value), -1);
-                }
+                // The task returned, decrement the counter
+                scheduler->counterIncrement(scheduler->mCounters[task.get_metadata()], -1);
             }
             else
             {
@@ -393,6 +354,44 @@ td::Scheduler::fiber_index_t td::Scheduler::acquireFreeFiber()
     }
 }
 
+td::handle::counter td::Scheduler::acquireCounterHandle()
+{
+    counter_index_t free_counter;
+    auto success = mFreeCounters.dequeue(free_counter);
+    CC_RUNTIME_ASSERT(success && "No free counters available, consider increasing config.max_num_counters");
+    mCounters[free_counter].reset();
+
+    auto const res = mCounterHandles.acquire();
+    mCounterHandles.get(res).counterIndex = free_counter;
+    return td::handle::counter{res};
+}
+
+int td::Scheduler::releaseCounter(td::handle::counter c)
+{
+    counter_index_t const freed_counter = mCounterHandles.get(c._value).counterIndex;
+    int const last_state = mCounters[freed_counter].count.load(std::memory_order_acquire);
+
+    mCounterHandles.release(c._value);
+    mFreeCounters.enqueue(freed_counter);
+
+    return last_state;
+}
+
+bool td::Scheduler::releaseCounterIfOnTarget(td::handle::counter c, int target)
+{
+    counter_index_t const freed_counter = mCounterHandles.get(c._value).counterIndex;
+    int const last_state = mCounters[freed_counter].count.load(std::memory_order_acquire);
+    if (last_state != target)
+    {
+        return false;
+    }
+
+    mCounterHandles.release(c._value);
+    mFreeCounters.enqueue(freed_counter);
+
+    return true;
+}
+
 void td::Scheduler::yieldToFiber(td::Scheduler::fiber_index_t target_fiber, td::Scheduler::fiber_destination_e own_destination)
 {
     s_tls.previous_fiber_index = s_tls.current_fiber_index;
@@ -434,18 +433,15 @@ bool td::Scheduler::getNextTask(td::container::task& task)
     // Locally pinned fibers first
     {
         auto& local_thread = mThreads[s_tls.thread_index];
-        fiber_index_t resumable_fiber_index = invalid_fiber;
-        bool got_resumable = false;
-
+        fiber_index_t resumable_fiber_index;
+        bool got_resumable;
         {
-            auto lg = LockGuard(local_thread.pinned_resumable_fibers_lock);
+            LockGuard lg(local_thread.pinned_resumable_fibers_lock);
             got_resumable = local_thread.pinned_resumable_fibers.dequeue(resumable_fiber_index);
         }
 
         if (got_resumable)
         {
-            CC_ASSERT(resumable_fiber_index < mFibers.size() && "fatal: received invalid fiber index from resumable queue");
-
             if (tryResumeFiber(resumable_fiber_index))
             {
                 // Successfully resumed (and returned)
@@ -454,7 +450,7 @@ bool td::Scheduler::getNextTask(td::container::task& task)
             {
                 // Received fiber is not cleaned up yet, re-enqueue (very rare)
                 {
-                    auto lg = LockGuard(local_thread.pinned_resumable_fibers_lock);
+                    LockGuard lg(local_thread.pinned_resumable_fibers_lock);
                     local_thread.pinned_resumable_fibers.enqueue(resumable_fiber_index);
                 }
 
@@ -467,13 +463,9 @@ bool td::Scheduler::getNextTask(td::container::task& task)
 
     // Global resumable fibers
     {
-        fiber_index_t resumable_fiber_index = invalid_fiber;
-        bool got_resumable = mResumableFibers.dequeue(resumable_fiber_index);
-
-        if (got_resumable)
+        fiber_index_t resumable_fiber_index;
+        if (mResumableFibers.dequeue(resumable_fiber_index))
         {
-            CC_ASSERT(resumable_fiber_index < mFibers.size() && "fatal: received invalid fiber index from resumable queue");
-
             if (tryResumeFiber(resumable_fiber_index))
             {
                 // Successfully resumed (and returned)
@@ -483,8 +475,7 @@ bool td::Scheduler::getNextTask(td::container::task& task)
                 // Received fiber is not cleaned up yet, re-enqueue (very rare)
                 // This should only happen if mResumableFibers is almost empty, and
                 // the latency impact is low in those cases
-                bool const re_enqueue_success = mResumableFibers.enqueue(resumable_fiber_index);
-                CC_ASSERT(re_enqueue_success && "fatal: fiber queue full"); // this should never happen
+                mResumableFibers.enqueue(resumable_fiber_index);
 
                 // signal the global event
                 native::signal_event(*mEventWorkAvailable);
@@ -503,7 +494,7 @@ bool td::Scheduler::getNextTask(td::container::task& task)
 bool td::Scheduler::tryResumeFiber(td::Scheduler::fiber_index_t fiber)
 {
     bool expected = true;
-    bool const cas_success = std::atomic_compare_exchange_strong_explicit(&mFibers[fiber].is_waiting_cleaned_up, &expected, false, //
+    auto const cas_success = std::atomic_compare_exchange_strong_explicit(&mFibers[fiber].is_waiting_cleaned_up, &expected, false, //
                                                                           std::memory_order_seq_cst, std::memory_order_relaxed);
     if (CC_LIKELY(cas_success))
     {
@@ -523,46 +514,35 @@ bool td::Scheduler::tryResumeFiber(td::Scheduler::fiber_index_t fiber)
     }
 }
 
-bool td::Scheduler::counterAddWaitingFiber(td::Scheduler::atomic_counter_t& counter, fiber_index_t fiber_index, thread_index_t pinned_thread_index, int counter_target, int& out_current_counter_value)
+bool td::Scheduler::counterAddWaitingFiber(td::Scheduler::atomic_counter_t& counter, fiber_index_t fiber_index, thread_index_t pinned_thread_index, int counter_target)
 {
-    CC_ASSERT(fiber_index < mFibers.size() && "attempted to register invalid fiber as waiting");
-
     for (auto i = 0u; i < atomic_counter_t::max_waiting; ++i)
     {
+        // Acquire free waiting slot
+        bool expected = true;
+        if (!std::atomic_compare_exchange_strong_explicit(&counter.free_waiting_slots[i], &expected, false, //
+                                                          std::memory_order_seq_cst, std::memory_order_relaxed))
+            continue;
+
         atomic_counter_t::waiting_fiber_t& slot = counter.waiting_fibers[i];
-
-        // relaxed load to skip nonempty slots
-        if (!slot.is_empty())
-        {
-            continue;
-        }
-
-        // try to lock
-        if (!slot.try_lock_from_empty())
-        {
-            continue;
-        }
-
-        // locked, write contents
         slot.fiber_index = fiber_index;
         slot.counter_target = counter_target;
         slot.pinned_thread_index = pinned_thread_index;
-
-        out_current_counter_value = counter.count.load(std::memory_order_relaxed);
-
-        // set to full
-        slot.unlock_to_full();
+        slot.in_use.store(false);
 
         // Check if already done
-        if (counter_target == out_current_counter_value)
-        {
-            if (!slot.cas_full_to_empty())
-            {
-                // got raced by other thread in processing this state
-                return false;
-            }
+        auto counter_val = counter.count.load(std::memory_order_relaxed);
+        if (slot.in_use.load(std::memory_order_acquire))
+            return false;
 
-            // slot (instantly) freed
+        if (slot.counter_target == counter_val)
+        {
+            expected = false;
+            if (!std::atomic_compare_exchange_strong_explicit(&slot.in_use, &expected, true, //
+                                                              std::memory_order_seq_cst, std::memory_order_relaxed))
+                return false;
+
+            counter.free_waiting_slots[i].store(true, std::memory_order_release);
             return true;
         }
 
@@ -579,59 +559,54 @@ void td::Scheduler::counterCheckWaitingFibers(td::Scheduler::atomic_counter_t& c
     // Go over each waiting fiber slot
     for (auto i = 0u; i < atomic_counter_t::max_waiting; ++i)
     {
-        atomic_counter_t::waiting_fiber_t& slot = counter.waiting_fibers[i];
-
-        // relaxed load to skip empty slots
-        if (slot.is_empty())
-        {
+        // Skip free slots
+        if (counter.free_waiting_slots[i].load(std::memory_order_acquire))
             continue;
-        }
+
+        auto& slot = counter.waiting_fibers[i];
+
+        // Skip the slot if it is in use already
+        if (slot.in_use.load(std::memory_order_acquire))
+            continue;
 
         // If this slot's dependency is met
         if (slot.counter_target == value)
         {
             // Lock the slot to be used by this thread
-            if (!slot.try_lock_from_full())
-            {
-                // Failed to lock, this slot is already being handled on a different thread
-                // (which stole it right between the two checks)
+            bool expected = false;
+            if (!std::atomic_compare_exchange_strong_explicit(&slot.in_use, &expected, true, //
+                                                              std::memory_order_seq_cst, std::memory_order_relaxed))
+                // Failed to lock, this slot is already being handled on a different thread (which stole it right between the two checks)
                 continue;
-            }
+
+            //            KW_LOG_DIAG("[cnst_check_waiting_fibers] Counter reached " << value << ", making waiting fiber " << slot.fiber_index << " resumable");
+
 
             // The waiting fiber is ready, and locked by this thread
-            auto const fiber_index_to_enqueue = slot.fiber_index;
-            CC_ASSERT(fiber_index_to_enqueue < mFibers.size() && "fatal: counter waiting slot has invalid associated fiber");
 
-            auto const read_pinned_thread_index = slot.pinned_thread_index;
-
-            // Free the slot
-            slot.unlock_to_empty();
-
-            // NOTE: the slot can now be immediately invalid, the reference must be considered dangling
-            // right after enqueuing into the MPMC / pinned resumable FIFO
-
-            if (read_pinned_thread_index == invalid_thread)
+            if (slot.pinned_thread_index == invalid_thread)
             {
                 // The waiting fiber is not pinned to any thread, store it in the global _resumable fibers
-                bool success = mResumableFibers.enqueue(fiber_index_to_enqueue);
+                bool success = mResumableFibers.enqueue(slot.fiber_index);
 
                 // This should never fail, the container is large enough for all fibers in the system
-                CC_ASSERT(success && "fatal: resumable fiber queue is full");
+                CC_ASSERT(success);
             }
             else
             {
                 // The waiting fiber is pinned to a certain thread, store it there
-                CC_ASSERT(read_pinned_thread_index < mThreads.size() && "fatal: counter waiting slot has invalid pinned thread index");
-                auto& pinned_thread = mThreads[read_pinned_thread_index];
+                auto& pinned_thread = mThreads[slot.pinned_thread_index];
 
-                {
-                    auto lg = LockGuard(pinned_thread.pinned_resumable_fibers_lock);
-                    pinned_thread.pinned_resumable_fibers.enqueue(fiber_index_to_enqueue);
-                }
+
+                LockGuard lg(pinned_thread.pinned_resumable_fibers_lock);
+                pinned_thread.pinned_resumable_fibers.enqueue(slot.fiber_index);
             }
 
             // signal the global event
             native::signal_event(*mEventWorkAvailable);
+
+            // Free the slot
+            counter.free_waiting_slots[i].store(true, std::memory_order_release);
         }
     }
 }
@@ -639,18 +614,42 @@ void td::Scheduler::counterCheckWaitingFibers(td::Scheduler::atomic_counter_t& c
 int td::Scheduler::counterIncrement(td::Scheduler::atomic_counter_t& counter, int amount)
 {
     CC_ASSERT(amount != 0 && "invalid counter increment value");
-    auto const previous = counter.count.fetch_add(amount);
+    auto previous = counter.count.fetch_add(amount);
     auto const new_val = previous + amount;
     counterCheckWaitingFibers(counter, new_val);
     return new_val;
 }
 
-bool td::Scheduler::enqueueTasks(td::container::task* tasks, unsigned num_tasks, handle::counter counter)
+td::Scheduler::Scheduler(scheduler_config const& config)
+  : mFiberStackSize(config.fiber_stack_size),
+    mNumCounters(config.max_num_counters),
+    mEnablePinThreads(config.pin_threads_to_cores),
+    mThreads(cc::fwd_array<worker_thread_t>::defaulted(config.num_threads)),
+    mFibers(cc::fwd_array<worker_fiber_t>::defaulted(config.num_fibers)),
+    mCounters(cc::fwd_array<atomic_counter_t>::defaulted(config.max_num_counters)),
+    mTasks(config.max_num_tasks),
+    mIdleFibers(mFibers.size()),
+    mResumableFibers(mFibers.size()),
+    mFreeCounters(config.max_num_counters)
 {
+    mEventWorkAvailable = new native::event_t();
+
+    CC_ASSERT(config.is_valid() && "Scheduler config invalid, use scheduler_config_t::validate()");
+    CC_ASSERT((config.num_threads <= system::num_logical_cores()) && "More threads than physical cores configured");
+}
+
+td::Scheduler::~Scheduler() { delete mEventWorkAvailable; }
+
+void td::Scheduler::submitTasks(td::container::task* tasks, unsigned num_tasks, handle::counter c)
+{
+    counter_index_t const counter_index = mCounterHandles.get(c._value).counterIndex;
+    counterIncrement(mCounters[counter_index], int(num_tasks));
+
+    // TODO: Multi-enqueue
     bool success = true;
     for (auto i = 0u; i < num_tasks; ++i)
     {
-        tasks[i].set_metadata(counter._value);
+        tasks[i].set_metadata(counter_index);
 
         if constexpr (gc_use_workstealing)
             s_tls.chase_lev_worker.push(tasks[i]);
@@ -662,98 +661,44 @@ bool td::Scheduler::enqueueTasks(td::container::task* tasks, unsigned num_tasks,
     native::signal_event(*mEventWorkAvailable);
 
     CC_RUNTIME_ASSERT(success && "Task queue is full, consider increasing config.max_num_tasks");
-    return success;
 }
 
-td::Scheduler::Scheduler(scheduler_config const& config)
-  : mFiberStackSize(config.fiber_stack_size),
-    mNumCounters(config.max_num_counters),
-    mEnablePinThreads(config.pin_threads_to_cores),
-    mThreads(cc::fwd_array<worker_thread_t>::defaulted(config.num_threads)),
-    mFibers(cc::fwd_array<worker_fiber_t>::defaulted(config.num_fibers)),
-    mTasks(config.max_num_tasks),
-    mIdleFibers(mFibers.size()),
-    mResumableFibers(mFibers.size())
-{
-    static_assert(std::is_trivially_destructible_v<Scheduler::atomic_counter_t>, "atomic counter type not trivially destructible");
-
-    mEventWorkAvailable = new native::event_t();
-
-    CC_ASSERT(config.is_valid() && "Scheduler config invalid, use scheduler_config_t::validate()");
-    CC_ASSERT((config.num_threads <= system::num_logical_cores()) && "More threads than physical cores configured");
-}
-
-td::Scheduler::~Scheduler() { delete mEventWorkAvailable; }
-
-td::handle::counter td::Scheduler::acquireCounterHandle()
-{
-    auto const res = mCounters.acquire();
-    return handle::counter{res};
-}
-
-int td::Scheduler::releaseCounter(handle::counter c)
-{
-    int const last_state = mCounters.get(c._value).count.load(std::memory_order_acquire);
-    mCounters.release(c._value);
-
-    return last_state;
-}
-
-bool td::Scheduler::releaseCounterIfOnTarget(handle::counter c, int target)
-{
-    int expected = target;
-    bool const cas_success = mCounters.get(c._value).count.compare_exchange_strong(expected, 0);
-
-    if (cas_success)
-    {
-        mCounters.release(c._value);
-    }
-
-    return cas_success;
-}
-
-void td::Scheduler::submitTasks(td::container::task* tasks, unsigned num_tasks, handle::counter c)
-{
-    counterIncrement(mCounters.get(c._value), int(num_tasks));
-    enqueueTasks(tasks, num_tasks, c);
-}
-
-void td::Scheduler::submitTasksWithoutCounter(td::container::task* tasks, unsigned num_tasks)
-{
-    enqueueTasks(tasks, num_tasks, handle::null_counter);
-}
-
-int td::Scheduler::wait(handle::counter c, bool pinnned, int target)
+void td::Scheduler::wait(handle::counter c, bool pinnned, int target)
 {
     CC_ASSERT(target >= 0 && "sync counter target must not be negative");
+    CC_ASSERT(mCounterHandles.is_alive(c._value) && "waited on expired counter handle");
+
+    auto const counter_index = mCounterHandles.get(c._value).counterIndex;
 
     // The current fiber is now waiting, but not yet cleaned up
     mFibers[s_tls.current_fiber_index].is_waiting_cleaned_up.store(false, std::memory_order_release);
 
-    int current_counter_value = 0;
-
-    if (counterAddWaitingFiber(mCounters.get(c._value), s_tls.current_fiber_index, pinnned ? s_tls.thread_index : invalid_thread, target, current_counter_value))
+    if (counterAddWaitingFiber(mCounters[counter_index], s_tls.current_fiber_index, pinnned ? s_tls.thread_index : invalid_thread, target))
     {
         // Already done
+        //        KW_LOG_DIAG("[wait] Wait for counter " << int(counter_index) << " is over early, resuming immediately");
     }
     else
     {
         // Not already done, prepare to yield
+        //        KW_LOG_DIAG("[wait] Waiting for counter " << int(counter_index) << ", yielding");
         yieldToFiber(acquireFreeFiber(), fiber_destination_e::waiting);
     }
 
     // Either the counter was already on target, or this fiber has been awakened because it is now on target,
     // return execution
-
-    return current_counter_value;
 }
 
-int td::Scheduler::incrementCounter(handle::counter c, unsigned amount) { return counterIncrement(mCounters.get(c._value), int(amount)); }
-
-int td::Scheduler::decrementCounter(handle::counter c, unsigned amount)
+int td::Scheduler::incrementCounter(td::handle::counter c, unsigned amount)
 {
-    // re-enqueue all waiting tasks as resumable
-    return counterIncrement(mCounters.get(c._value), -1 * int(amount));
+    auto const counter_index = mCounterHandles.get(c._value).counterIndex;
+    return counterIncrement(mCounters[counter_index], int(amount));
+}
+
+int td::Scheduler::decrementCounter(td::handle::counter c, unsigned amount)
+{
+    auto const counter_index = mCounterHandles.get(c._value).counterIndex;
+    return counterIncrement(mCounters[counter_index], int(amount) * -1);
 }
 
 unsigned td::Scheduler::CurrentThreadIndex() { return s_tls.thread_index; }
@@ -764,7 +709,8 @@ void td::Scheduler::start(td::container::task main_task)
     // Re-default all arrays, as multiple starts are possible
     mThreads = cc::fwd_array<worker_thread_t>::defaulted(mThreads.size());
     mFibers = cc::fwd_array<worker_fiber_t>::defaulted(mFibers.size());
-    mCounters.initialize(mNumCounters);
+    mCounters = cc::fwd_array<atomic_counter_t>::defaulted(mCounters.size());
+    mCounterHandles.initialize(mNumCounters);
 
     mIsShuttingDown.store(false, std::memory_order_seq_cst);
 
@@ -804,7 +750,7 @@ void td::Scheduler::start(td::container::task main_task)
         native::create_main_fiber(s_tls.thread_fiber);
 
 #ifdef TD_HAS_RICH_LOG
-        rlog::set_current_thread_name("td#%.2u", 0);
+        rlog::set_current_thread_name("td#0");
 #endif
     }
 
@@ -813,6 +759,12 @@ void td::Scheduler::start(td::container::task main_task)
     {
         native::create_fiber(mFibers[i].native, callback_funcs::fiber_func, this, mFiberStackSize);
         mIdleFibers.enqueue(i);
+    }
+
+    // Populate free counter queue
+    for (counter_index_t i = 0; i < mCounters.size(); ++i)
+    {
+        mFreeCounters.enqueue(i);
     }
 
     // Launch worker threads, starting at 1
@@ -900,55 +852,37 @@ void td::Scheduler::start(td::container::task main_task)
         // Clean up
         {
             for (auto& fib : mFibers)
-            {
                 native::delete_fiber(fib.native);
-            }
 
-            // Empty Queues
-            // task queue
+            // Empty queues
+            container::task task_dump;
+            fiber_index_t fiber_dump;
+            counter_index_t counter_dump;
+            while (mTasks.dequeue(task_dump))
             {
-                container::task task_dump;
-                unsigned num_outstanding_tasks = 0;
-                while (mTasks.dequeue(task_dump))
-                {
-                    // Spin
-                    ++num_outstanding_tasks;
-                }
-
-                if (num_outstanding_tasks > 0)
-                {
-                    // it's unreasonable to execute skipped tasks serially here (because of dependencies and pinned waits),
-                    // the user should instead prevent this by waiting on all syncs before shutdown
-                    fprintf(stderr, "[task-dispatcher] warning: skipped %u pending tasks with shutdown\n", num_outstanding_tasks);
-                }
+                // Spin
             }
 
-            // fiber queues
+            while (mIdleFibers.dequeue(fiber_dump))
             {
-                fiber_index_t fiber_dump;
-                while (mIdleFibers.dequeue(fiber_dump))
-                {
-                    // Spin
-                }
-
-                unsigned num_resumable_fibers = 0;
-                while (mResumableFibers.dequeue(fiber_dump))
-                {
-                    // Spin
-                    ++num_resumable_fibers;
-                }
-
-                if (num_resumable_fibers > 0)
-                {
-                    fprintf(stderr, "[task-dispatcher] warning: skipped %u resumable fibers with shutdown\n", num_resumable_fibers);
-                }
+                // Spin
             }
 
-            mCounters.destroy();
+            while (mResumableFibers.dequeue(fiber_dump))
+            {
+                // Spin
+            }
+
+            while (mFreeCounters.dequeue(counter_dump))
+            {
+                // Spin
+            }
+
+            // Reset counter handles
+            mCounterHandles.destroy();
 
             // Clear sCurrentScheduler
             sCurrentScheduler = nullptr;
-            s_tls.reset();
         }
     }
 

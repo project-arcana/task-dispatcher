@@ -26,7 +26,7 @@ namespace td::container
 struct task
 {
 public:
-    using default_metadata_t = cc::uint32;
+    using default_metadata_t = cc::uint16;
     using function_ptr_t = void (*)(void*);
     using execute_and_cleanup_function_t = void(cc::byte*);
 
