@@ -170,7 +170,7 @@ private:
 
     int counterIncrement(atomic_counter_t& counter, int amount = 1);
 
-    bool enqueueTasks(td::container::task* tasks, unsigned num_tasks, counter_index_t counter_i);
+    bool enqueueTasks(td::container::task* tasks, unsigned num_tasks, handle::counter counter);
 
     Scheduler(Scheduler const& other) = delete;
     Scheduler(Scheduler&& other) noexcept = delete;

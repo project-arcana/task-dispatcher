@@ -50,6 +50,13 @@ constexpr bool const gc_warn_timeouts = false;
 
 // If true, print a warning to stderr if a deadlock is heuristically detected
 constexpr bool const gc_warn_deadlocks = true;
+
+enum class WaitingSlotState : int32_t
+{
+    Empty,
+    Locked,
+    Full
+};
 }
 
 thread_local td::Scheduler* td::Scheduler::sCurrentScheduler = nullptr;
@@ -62,26 +69,50 @@ struct alignas(64) Scheduler::atomic_counter_t
 {
     struct waiting_fiber_t
     {
-        int counter_target = 0;                              // the counter value that this fiber is waiting for
+        int32_t counter_target = 0;                          // the counter value that this fiber is waiting for
         fiber_index_t fiber_index = invalid_fiber;           // index of the waiting fiber
         thread_index_t pinned_thread_index = invalid_thread; // index of the thread this fiber is pinned to, invalid_thread if unpinned
-        std::atomic_bool in_use{true};                       // whether this slot in the array is currently being processed
+
+        bool is_empty() { return state.load(std::memory_order_relaxed) == WaitingSlotState::Empty; }
+
+        bool try_lock_from_empty()
+        {
+            WaitingSlotState expected = WaitingSlotState::Empty;
+            return std::atomic_compare_exchange_strong(&state, &expected, WaitingSlotState::Locked);
+        }
+
+        bool try_lock_from_full()
+        {
+            WaitingSlotState expected = WaitingSlotState::Full;
+            return std::atomic_compare_exchange_strong(&state, &expected, WaitingSlotState::Locked);
+        }
+
+        bool cas_full_to_empty()
+        {
+            WaitingSlotState expected = WaitingSlotState::Full;
+            return std::atomic_compare_exchange_strong(&state, &expected, WaitingSlotState::Empty);
+        }
+
+        void unlock_to_empty()
+        {
+            auto const prevState = state.exchange(WaitingSlotState::Empty);
+            CC_ASSERT(prevState == WaitingSlotState::Locked && "unexpected race on slot state");
+        }
+
+        void unlock_to_full()
+        {
+            auto const prevState = state.exchange(WaitingSlotState::Full);
+            CC_ASSERT(prevState == WaitingSlotState::Locked && "unexpected race on slot state");
+        }
+
+    private:
+        std::atomic<WaitingSlotState> state = {WaitingSlotState::Empty};
     };
 
-    std::atomic<int> count; // The value of this counter
+    std::atomic_int count; // The value of this counter
 
     static constexpr unsigned max_waiting = 16;
     cc::array<waiting_fiber_t, max_waiting> waiting_fibers = {};
-    cc::array<std::atomic_bool, max_waiting> free_waiting_slots = {};
-
-    // Resets this counter for re-use
-    void reset()
-    {
-        count.store(0, std::memory_order_release);
-
-        for (auto i = 0u; i < max_waiting; ++i)
-            free_waiting_slots[i].store(true);
-    }
 
     friend td::Scheduler;
 };
@@ -264,11 +295,10 @@ struct Scheduler::callback_funcs
                 task.execute_and_cleanup();
 
                 // The task returned, decrement the counter if present
-                counter_index_t const associated_counter = task.get_metadata();
-                if (associated_counter != invalid_counter)
+                auto const associated_counter = handle::counter{task.get_metadata()};
+                if (associated_counter.is_valid())
                 {
-                    td::handle::counter const reconstructed_handle = scheduler->mCounters.unsafe_construct_handle_for_index(associated_counter);
-                    scheduler->counterIncrement(scheduler->mCounters.get(reconstructed_handle._value), -1);
+                    scheduler->counterIncrement(scheduler->mCounters.get(associated_counter._value), -1);
                 }
             }
             else
@@ -499,38 +529,40 @@ bool td::Scheduler::counterAddWaitingFiber(td::Scheduler::atomic_counter_t& coun
 
     for (auto i = 0u; i < atomic_counter_t::max_waiting; ++i)
     {
-        // Acquire free waiting slot
-        bool expected = true;
-        if (!std::atomic_compare_exchange_strong_explicit(&counter.free_waiting_slots[i], &expected, false, //
-                                                          std::memory_order_seq_cst, std::memory_order_relaxed))
+        atomic_counter_t::waiting_fiber_t& slot = counter.waiting_fibers[i];
+
+        // relaxed load to skip nonempty slots
+        if (!slot.is_empty())
         {
             continue;
         }
 
-        atomic_counter_t::waiting_fiber_t& slot = counter.waiting_fibers[i];
+        // try to lock
+        if (!slot.try_lock_from_empty())
+        {
+            continue;
+        }
+
+        // locked, write contents
         slot.fiber_index = fiber_index;
         slot.counter_target = counter_target;
         slot.pinned_thread_index = pinned_thread_index;
-        slot.in_use.store(false);
 
         out_current_counter_value = counter.count.load(std::memory_order_relaxed);
 
-        if (slot.in_use.load(std::memory_order_acquire))
-        {
-            return false;
-        }
+        // set to full
+        slot.unlock_to_full();
 
         // Check if already done
         if (counter_target == out_current_counter_value)
         {
-            expected = false;
-            if (!std::atomic_compare_exchange_strong_explicit(&slot.in_use, &expected, true, //
-                                                              std::memory_order_seq_cst, std::memory_order_relaxed))
+            if (!slot.cas_full_to_empty())
             {
+                // got raced by other thread in processing this state
                 return false;
             }
 
-            counter.free_waiting_slots[i].store(true, std::memory_order_release);
+            // slot (instantly) freed
             return true;
         }
 
@@ -547,36 +579,38 @@ void td::Scheduler::counterCheckWaitingFibers(td::Scheduler::atomic_counter_t& c
     // Go over each waiting fiber slot
     for (auto i = 0u; i < atomic_counter_t::max_waiting; ++i)
     {
-        // Skip free slots
-        if (counter.free_waiting_slots[i].load(std::memory_order_acquire))
-            continue;
+        atomic_counter_t::waiting_fiber_t& slot = counter.waiting_fibers[i];
 
-        auto& slot = counter.waiting_fibers[i];
-
-        // Skip the slot if it is in use already
-        if (slot.in_use.load(std::memory_order_acquire))
+        // relaxed load to skip empty slots
+        if (slot.is_empty())
+        {
             continue;
+        }
 
         // If this slot's dependency is met
         if (slot.counter_target == value)
         {
             // Lock the slot to be used by this thread
-            bool expected = false;
-            if (!std::atomic_compare_exchange_strong_explicit(&slot.in_use, &expected, true, //
-                                                              std::memory_order_seq_cst, std::memory_order_relaxed))
+            if (!slot.try_lock_from_full())
             {
-                // Failed to lock, this slot is already being handled on a different thread (which stole it right between the two checks)
+                // Failed to lock, this slot is already being handled on a different thread
+                // (which stole it right between the two checks)
                 continue;
             }
-
-            //            KW_LOG_DIAG("[cnst_check_waiting_fibers] Counter reached " << value << ", making waiting fiber " << slot.fiber_index << " resumable");
-
 
             // The waiting fiber is ready, and locked by this thread
             auto const fiber_index_to_enqueue = slot.fiber_index;
             CC_ASSERT(fiber_index_to_enqueue < mFibers.size() && "fatal: counter waiting slot has invalid associated fiber");
 
-            if (slot.pinned_thread_index == invalid_thread)
+            auto const read_pinned_thread_index = slot.pinned_thread_index;
+
+            // Free the slot
+            slot.unlock_to_empty();
+
+            // NOTE: the slot can now be immediately invalid, the reference must be considered dangling
+            // right after enqueuing into the MPMC / pinned resumable FIFO
+
+            if (read_pinned_thread_index == invalid_thread)
             {
                 // The waiting fiber is not pinned to any thread, store it in the global _resumable fibers
                 bool success = mResumableFibers.enqueue(fiber_index_to_enqueue);
@@ -587,8 +621,8 @@ void td::Scheduler::counterCheckWaitingFibers(td::Scheduler::atomic_counter_t& c
             else
             {
                 // The waiting fiber is pinned to a certain thread, store it there
-                CC_ASSERT(slot.pinned_thread_index < mThreads.size() && "fatal: counter waiting slot has invalid pinned thread index");
-                auto& pinned_thread = mThreads[slot.pinned_thread_index];
+                CC_ASSERT(read_pinned_thread_index < mThreads.size() && "fatal: counter waiting slot has invalid pinned thread index");
+                auto& pinned_thread = mThreads[read_pinned_thread_index];
 
                 {
                     auto lg = LockGuard(pinned_thread.pinned_resumable_fibers_lock);
@@ -598,9 +632,6 @@ void td::Scheduler::counterCheckWaitingFibers(td::Scheduler::atomic_counter_t& c
 
             // signal the global event
             native::signal_event(*mEventWorkAvailable);
-
-            // Free the slot
-            counter.free_waiting_slots[i].store(true, std::memory_order_release);
         }
     }
 }
@@ -614,12 +645,12 @@ int td::Scheduler::counterIncrement(td::Scheduler::atomic_counter_t& counter, in
     return new_val;
 }
 
-bool td::Scheduler::enqueueTasks(td::container::task* tasks, unsigned num_tasks, td::Scheduler::counter_index_t counter_i)
+bool td::Scheduler::enqueueTasks(td::container::task* tasks, unsigned num_tasks, handle::counter counter)
 {
     bool success = true;
     for (auto i = 0u; i < num_tasks; ++i)
     {
-        tasks[i].set_metadata(counter_i);
+        tasks[i].set_metadata(counter._value);
 
         if constexpr (gc_use_workstealing)
             s_tls.chase_lev_worker.push(tasks[i]);
@@ -657,8 +688,7 @@ td::Scheduler::~Scheduler() { delete mEventWorkAvailable; }
 td::handle::counter td::Scheduler::acquireCounterHandle()
 {
     auto const res = mCounters.acquire();
-    mCounters.get(res).reset();
-    return {res};
+    return handle::counter{res};
 }
 
 int td::Scheduler::releaseCounter(handle::counter c)
@@ -685,12 +715,13 @@ bool td::Scheduler::releaseCounterIfOnTarget(handle::counter c, int target)
 void td::Scheduler::submitTasks(td::container::task* tasks, unsigned num_tasks, handle::counter c)
 {
     counterIncrement(mCounters.get(c._value), int(num_tasks));
-    counter_index_t const counter_index = counter_index_t(mCounters.get_handle_index(c._value));
-
-    enqueueTasks(tasks, num_tasks, counter_index);
+    enqueueTasks(tasks, num_tasks, c);
 }
 
-void td::Scheduler::submitTasksWithoutCounter(td::container::task* tasks, unsigned num_tasks) { enqueueTasks(tasks, num_tasks, invalid_counter); }
+void td::Scheduler::submitTasksWithoutCounter(td::container::task* tasks, unsigned num_tasks)
+{
+    enqueueTasks(tasks, num_tasks, handle::null_counter);
+}
 
 int td::Scheduler::wait(handle::counter c, bool pinnned, int target)
 {
