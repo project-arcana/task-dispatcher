@@ -132,16 +132,16 @@ void submit(sync& sync, F&& func)
 
 namespace detail
 {
-inline void single_wait_for(sync& sync, bool pinned)
+inline int single_wait_for(sync& sync, bool pinned)
 {
     if (!sync.handle.is_valid())
     {
         // return immediately for uninitialized syncs
-        return;
+        return 0;
     }
 
     // perform real wait
-    Scheduler::Current().wait(sync.handle, pinned, 0);
+    int const res = Scheduler::Current().wait(sync.handle, pinned, 0);
 
     // free the sync if it reached 0
     if (Scheduler::Current().releaseCounterIfOnTarget(sync.handle, 0))
@@ -149,6 +149,8 @@ inline void single_wait_for(sync& sync, bool pinned)
         // mark as uninitialized
         sync.handle = handle::null_counter;
     }
+
+    return res;
 }
 }
 
@@ -156,11 +158,11 @@ inline void single_wait_for(sync& sync, bool pinned)
 // Wait on sync objects
 
 /// waits on a sync object, returns it's value before the call
-inline void wait_for(sync& sync) { detail::single_wait_for(sync, true); }
+inline int wait_for(sync& sync) { return detail::single_wait_for(sync, true); }
 
 /// waits on a sync object, returns it's value before the call
 /// unpinned: can resume execution on a different thread than the calling one
-inline void wait_for_unpinned(sync& sync) { detail::single_wait_for(sync, false); }
+inline int wait_for_unpinned(sync& sync) { return detail::single_wait_for(sync, false); }
 
 template <class... STs>
 [[deprecated("multi-wait overloads will be removed in a future version")]] void wait_for(STs&... syncs)
@@ -210,7 +212,7 @@ inline int increment_counter(handle::counter handle, unsigned amount = 1) { retu
 inline void decrement_counter(handle::counter handle, unsigned amount = 1) { Scheduler::Current().decrementCounter(handle, amount); }
 
 /// waits on a counter, returns it's value before the wait
-inline void wait_for_counter(handle::counter handle, bool pinned, int target = 0) { Scheduler::Current().wait(handle, pinned, target); }
+inline int wait_for_counter(handle::counter handle, bool pinned, int target = 0) { return Scheduler::Current().wait(handle, pinned, target); }
 
 inline void submit_on_counter(handle::counter handle, container::task* tasks, unsigned num)
 {

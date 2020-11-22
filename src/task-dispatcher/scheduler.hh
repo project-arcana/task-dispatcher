@@ -89,7 +89,7 @@ public:
 
     /// Resume execution after the given counter has reached a set target
     /// returns the counter value before the wait
-    void wait(handle::counter c, bool pinnned = false, int target = 0);
+    int wait(handle::counter c, bool pinnned = false, int target = 0);
 
     /// experimental: manually increment a counter, preventing waits to resolve
     /// returns the new counter state
@@ -171,7 +171,7 @@ private:
     bool getNextTask(container::task& task);
     bool tryResumeFiber(fiber_index_t fiber);
 
-    bool counterAddWaitingFiber(atomic_counter_t& counter, fiber_index_t fiber_index, thread_index_t pinned_thread_index, int counter_target);
+    bool counterAddWaitingFiber(atomic_counter_t& counter, fiber_index_t fiber_index, thread_index_t pinned_thread_index, int counter_target, int& out_counter_val);
     void counterCheckWaitingFibers(atomic_counter_t& counter, int value);
 
     int counterIncrement(atomic_counter_t& counter, int amount = 1);

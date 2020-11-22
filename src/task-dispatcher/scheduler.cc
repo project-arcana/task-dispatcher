@@ -514,7 +514,7 @@ bool td::Scheduler::tryResumeFiber(td::Scheduler::fiber_index_t fiber)
     }
 }
 
-bool td::Scheduler::counterAddWaitingFiber(td::Scheduler::atomic_counter_t& counter, fiber_index_t fiber_index, thread_index_t pinned_thread_index, int counter_target)
+bool td::Scheduler::counterAddWaitingFiber(td::Scheduler::atomic_counter_t& counter, fiber_index_t fiber_index, thread_index_t pinned_thread_index, int counter_target, int& out_counter_val)
 {
     for (auto i = 0u; i < atomic_counter_t::max_waiting; ++i)
     {
@@ -531,7 +531,9 @@ bool td::Scheduler::counterAddWaitingFiber(td::Scheduler::atomic_counter_t& coun
         slot.in_use.store(false);
 
         // Check if already done
-        auto counter_val = counter.count.load(std::memory_order_relaxed);
+        auto const counter_val = counter.count.load(std::memory_order_relaxed);
+        out_counter_val = counter_val;
+
         if (slot.in_use.load(std::memory_order_acquire))
             return false;
 
@@ -663,7 +665,7 @@ void td::Scheduler::submitTasks(td::container::task* tasks, unsigned num_tasks, 
     CC_RUNTIME_ASSERT(success && "Task queue is full, consider increasing config.max_num_tasks");
 }
 
-void td::Scheduler::wait(handle::counter c, bool pinnned, int target)
+int td::Scheduler::wait(handle::counter c, bool pinnned, int target)
 {
     CC_ASSERT(target >= 0 && "sync counter target must not be negative");
     CC_ASSERT(mCounterHandles.is_alive(c._value) && "waited on expired counter handle");
@@ -673,7 +675,8 @@ void td::Scheduler::wait(handle::counter c, bool pinnned, int target)
     // The current fiber is now waiting, but not yet cleaned up
     mFibers[s_tls.current_fiber_index].is_waiting_cleaned_up.store(false, std::memory_order_release);
 
-    if (counterAddWaitingFiber(mCounters[counter_index], s_tls.current_fiber_index, pinnned ? s_tls.thread_index : invalid_thread, target))
+    int counter_value_before_wait = -1;
+    if (counterAddWaitingFiber(mCounters[counter_index], s_tls.current_fiber_index, pinnned ? s_tls.thread_index : invalid_thread, target, counter_value_before_wait))
     {
         // Already done
         //        KW_LOG_DIAG("[wait] Wait for counter " << int(counter_index) << " is over early, resuming immediately");
@@ -687,6 +690,8 @@ void td::Scheduler::wait(handle::counter c, bool pinnned, int target)
 
     // Either the counter was already on target, or this fiber has been awakened because it is now on target,
     // return execution
+
+    return counter_value_before_wait;
 }
 
 int td::Scheduler::incrementCounter(td::handle::counter c, unsigned amount)
