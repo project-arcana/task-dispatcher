@@ -213,7 +213,7 @@ struct Scheduler::callback_funcs
         s_tls.thread_index = worker_arg->index;
 
 #ifdef TD_HAS_RICH_LOG
-        rlog::set_current_thread_name("td#%u", worker_arg->index);
+        rlog::set_current_thread_name("td#%02u", worker_arg->index);
 #endif
 
         // Set up chase lev deques
@@ -755,7 +755,7 @@ void td::Scheduler::start(td::container::task main_task)
         native::create_main_fiber(s_tls.thread_fiber);
 
 #ifdef TD_HAS_RICH_LOG
-        rlog::set_current_thread_name("td#0");
+        rlog::set_current_thread_name("td#00");
 #endif
     }
 
