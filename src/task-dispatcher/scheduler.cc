@@ -215,6 +215,7 @@ struct Scheduler::callback_funcs
 #ifdef TD_HAS_RICH_LOG
         rlog::set_current_thread_name("td#%02u", worker_arg->index);
 #endif
+        native::set_current_thread_debug_name(int(worker_arg->index));
 
         // Set up chase lev deques
         if constexpr (gc_use_workstealing)

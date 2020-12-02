@@ -8,6 +8,8 @@
 
 #ifdef CC_OS_WINDOWS
 
+#include <cstdio>
+
 #include <process.h>
 #include <clean-core/native/win32_sanitized.hh>
 
@@ -37,12 +39,57 @@ struct event_t
     ::CRITICAL_SECTION crit_sec;
 };
 
+namespace detail
+{
+#pragma pack(push, 8)
+typedef struct tagTHREADNAME_INFO
+{
+    DWORD dwType;     // Must be 0x1000.
+    LPCSTR szName;    // Pointer to name (in user addr space).
+    DWORD dwThreadID; // Thread ID (-1=caller thread).
+    DWORD dwFlags;    // Reserved for future use, must be zero.
+} THREADNAME_INFO;
+#pragma pack(pop)
+
+inline void set_win32_thread_name(DWORD dwThreadID, const char* threadName)
+{
+    // this throws a SEH exception which is one of two ways of setting a thread name
+    // in Win32. the other is less reliable and only available after Win10 1607
+    // see https://docs.microsoft.com/en-us/visualstudio/debugger/how-to-set-a-thread-name-in-native-code?view=vs-2019
+
+    THREADNAME_INFO info;
+    info.dwType = 0x1000;
+    info.szName = threadName;
+    info.dwThreadID = dwThreadID;
+    info.dwFlags = 0;
+#pragma warning(push)
+#pragma warning(disable : 6320 6322)
+    __try
+    {
+        RaiseException(0x406D1388, 0, sizeof(info) / sizeof(ULONG_PTR), (ULONG_PTR*)&info);
+    }
+    __except (EXCEPTION_EXECUTE_HANDLER)
+    {
+    }
+#pragma warning(pop)
+}
+}
+
 [[maybe_unused]] constexpr static uint32_t event_wait_infinite = INFINITE;
 
 using thread_start_func_t = uint32_t(__stdcall*)(void* arg);
 #define TD_NATIVE_THREAD_RETURN_TYPE uint32_t
 #define TD_NATIVE_THREAD_FUNC_DECL TD_NATIVE_THREAD_RETURN_TYPE __stdcall
 #define TD_NATIVE_THREAD_FUNC_END return 0
+
+inline void set_current_thread_debug_name(int id)
+{
+#ifndef NDEBUG
+    char buf[256];
+    std::snprintf(buf, sizeof(buf), "td worker thread #%02d", id);
+    detail::set_win32_thread_name((DWORD)-1, buf);
+#endif
+}
 
 inline bool create_thread(size_t stack_size, thread_start_func_t start_routine, void* arg, thread_t* return_thread)
 {
@@ -216,6 +263,11 @@ inline bool create_posix_thread(size_t stack_size, thread_start_func_t start_rou
 
     return create_res == 0;
 }
+}
+
+inline void set_current_thread_debug_name(int id)
+{
+    (void)id; // TODO
 }
 
 inline bool create_thread(size_t stack_size, thread_start_func_t start_routine, void* arg, thread_t* return_thread)
