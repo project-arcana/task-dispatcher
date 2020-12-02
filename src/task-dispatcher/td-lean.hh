@@ -20,6 +20,21 @@
 namespace td
 {
 // ==========
+// Info
+
+/// returns true if the call is being made from within a scheduler
+[[nodiscard]] inline bool is_scheduler_alive() { return Scheduler::IsInsideScheduler(); }
+
+/// returns the amount of threads the current scheduler has, only call if is_scheduler_alive() == true
+[[nodiscard]] inline unsigned get_current_num_threads() { return Scheduler::Current().getNumThreads(); }
+
+/// returns the index of the current thread, or unsigned(-1) on unowned threads
+[[nodiscard]] inline unsigned current_thread_id() { return Scheduler::CurrentThreadIndex(); }
+
+/// returns the index of the current fiber, or unsigned(-1) on unowned threads
+[[nodiscard]] inline unsigned current_fiber_id() { return Scheduler::CurrentFiberIndex(); }
+
+// ==========
 // Launch
 
 /// launches a scheduler with the given config, and calls the lambda as its main task
@@ -58,21 +73,6 @@ void launch_singlethreaded(F&& func)
     config.num_threads = 1;
     return launch(config, cc::forward<F>(func));
 }
-
-// ==========
-// Info
-
-/// returns true if the call is being made from within a scheduler
-[[nodiscard]] inline bool is_scheduler_alive() { return Scheduler::IsInsideScheduler(); }
-
-/// returns the amount of threads the current scheduler has, only call if is_scheduler_alive() == true
-[[nodiscard]] inline unsigned get_current_num_threads() { return Scheduler::Current().getNumThreads(); }
-
-/// returns the index of the current thread, or unsigned(-1) on unowned threads
-[[nodiscard]] inline unsigned current_thread_id() { return Scheduler::CurrentThreadIndex(); }
-
-/// returns the index of the current fiber, or unsigned(-1) on unowned threads
-[[nodiscard]] inline unsigned current_fiber_id() { return Scheduler::CurrentFiberIndex(); }
 
 
 // ==========
