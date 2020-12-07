@@ -70,7 +70,7 @@ struct Scheduler::atomic_counter_t
 
     std::atomic<int> count; // The value of this counter
 
-    static constexpr unsigned max_waiting = 16;
+    static constexpr unsigned max_waiting = 32;
     cc::array<waiting_fiber_t, max_waiting> waiting_fibers = {};
     cc::array<std::atomic_bool, max_waiting> free_waiting_slots = {};
 
