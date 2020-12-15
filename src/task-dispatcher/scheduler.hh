@@ -6,6 +6,7 @@
 #include <clean-core/fwd_array.hh>
 #include <clean-core/typedefs.hh>
 
+#include <task-dispatcher/common/api.hh>
 #include <task-dispatcher/common/system_info.hh>
 #include <task-dispatcher/container/mpmc_queue.hh>
 #include <task-dispatcher/container/task.hh>
@@ -20,7 +21,7 @@ struct fiber_t;
 struct event_t;
 }
 
-struct scheduler_config
+struct TD_API scheduler_config
 {
     /// amount of fibers created
     /// limits the amount of concurrently waiting tasks
@@ -61,7 +62,7 @@ public:
 // Never allocates after the main task starts executing
 // submitTasks and wait must only be called from inside scheduler tasks
 // td::sync objects passed to submitTasks must eventually be waited upon using wait
-class Scheduler
+class TD_API Scheduler
 {
 public:
     struct tls_t;
@@ -104,17 +105,13 @@ public:
     [[nodiscard]] unsigned getNumThreads() const { return unsigned(mThreads.size()); }
 
     /// Returns the scheduler running the current task
-    [[nodiscard]] static Scheduler& Current() { return *sCurrentScheduler; }
+    [[nodiscard]] static Scheduler& Current();
     /// Returns true if called from inside the scheduler
-    [[nodiscard]] static bool IsInsideScheduler() { return sCurrentScheduler != nullptr; }
+    [[nodiscard]] static bool IsInsideScheduler();
     /// Returns the index of the calling thread, relative to its owning scheduler. returns unsigned(-1) on unowned threads
     [[nodiscard]] static unsigned CurrentThreadIndex();
     /// Returns the index of the calling fiber, relative to its owning scheduler. returns unsigned(-1) on unowned threads
     [[nodiscard]] static unsigned CurrentFiberIndex();
-
-
-private:
-    static thread_local Scheduler* sCurrentScheduler;
 
 public:
     using fiber_index_t = unsigned;

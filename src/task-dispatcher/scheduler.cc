@@ -50,9 +50,10 @@ constexpr bool const gc_warn_timeouts = false;
 
 // If true, print a warning to stderr if a deadlock is heuristically detected
 constexpr bool const gc_warn_deadlocks = true;
+
+thread_local td::Scheduler* sCurrentScheduler = nullptr;
 }
 
-thread_local td::Scheduler* td::Scheduler::sCurrentScheduler = nullptr;
 
 namespace td
 {
@@ -207,7 +208,7 @@ struct Scheduler::callback_funcs
 
         // Register thread local current scheduler variable
         Scheduler* const scheduler = worker_arg->owning_scheduler;
-        scheduler->sCurrentScheduler = scheduler;
+        sCurrentScheduler = scheduler;
 
         s_tls.reset();
         s_tls.thread_index = worker_arg->index;
@@ -706,6 +707,10 @@ int td::Scheduler::decrementCounter(td::handle::counter c, unsigned amount)
     auto const counter_index = mCounterHandles.get(c._value).counterIndex;
     return counterIncrement(mCounters[counter_index], int(amount) * -1);
 }
+
+td::Scheduler &td::Scheduler::Current() { return *sCurrentScheduler; }
+
+bool td::Scheduler::IsInsideScheduler() { return sCurrentScheduler != nullptr; }
 
 unsigned td::Scheduler::CurrentThreadIndex() { return s_tls.thread_index; }
 unsigned td::Scheduler::CurrentFiberIndex() { return s_tls.current_fiber_index; }
