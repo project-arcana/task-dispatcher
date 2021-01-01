@@ -47,10 +47,10 @@ struct TD_API scheduler_config
     /// can degrade performance on a multitasking (desktop) OS depending on other process load
     bool pin_threads_to_cores = false;
 
-    /// function that is called by each worker thread at launch,
-    /// argument is the worker thread index and optional userdata
-    cc::function_ptr<void(unsigned, void*)> worker_thread_start_function = nullptr;
-    void* worker_thread_start_userdata = nullptr;
+    /// functions that is called by each worker thread once at launch and once at shutdown,
+    /// called as func(worker_index, is_start, userdata)
+    cc::function_ptr<void(unsigned, bool, void*)> worker_thread_startstop_function = nullptr;
+    void* worker_thread_startstop_userdata = nullptr;
 
 public:
     /// Some values in this config must be a power of 2

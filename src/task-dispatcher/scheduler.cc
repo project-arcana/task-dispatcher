@@ -198,55 +198,62 @@ struct Scheduler::callback_funcs
     {
         thread_index_t index;
         td::Scheduler* owning_scheduler;
-        cc::function_ptr<void(unsigned, void*)> thread_start_func;
-        void* thread_start_userdata;
+        cc::function_ptr<void(unsigned, bool, void*)> thread_startstop_func;
+        void* thread_startstop_userdata;
         cc::vector<std::shared_ptr<container::spmc::Deque<container::task>>> chase_lev_deques;
     };
 
     static TD_NATIVE_THREAD_FUNC_DECL worker_func(void* arg_void)
     {
-        Scheduler* scheduler;
-        {
-            worker_arg_t* const worker_arg = static_cast<worker_arg_t*>(arg_void);
+        worker_arg_t* const worker_arg = static_cast<worker_arg_t*>(arg_void);
 
-            // Register thread local current scheduler variable
-            scheduler = worker_arg->owning_scheduler;
-            sCurrentScheduler = scheduler;
+        // Register thread local current scheduler variable
+        Scheduler* const scheduler = worker_arg->owning_scheduler;
+        sCurrentScheduler = scheduler;
 
-            s_tls.reset();
-            s_tls.thread_index = worker_arg->index;
+        s_tls.reset();
+        s_tls.thread_index = worker_arg->index;
 
-            // worker thread startup tasks
+        // worker thread startup tasks
 #ifdef TD_HAS_RICH_LOG
-            // set the rich-log thread name (shown as a prefix)
-            rlog::set_current_thread_name("td#%02u", worker_arg->index);
+        // set the rich-log thread name (shown as a prefix)
+        rlog::set_current_thread_name("td#%02u", worker_arg->index);
 #endif
-            // set the thead name for debuggers
-            native::set_current_thread_debug_name(int(worker_arg->index));
+        // set the thead name for debuggers
+        native::set_current_thread_debug_name(int(worker_arg->index));
 
-            // optionally call the user provided function
-            if (worker_arg->thread_start_func)
-            {
-                worker_arg->thread_start_func(unsigned(worker_arg->index), worker_arg->thread_start_userdata);
-            }
-
-            // Set up chase lev deques
-            if constexpr (gc_use_workstealing)
-                s_tls.prepare_chase_lev(worker_arg->chase_lev_deques, worker_arg->index);
-
-            // Clean up allocated argument
-            delete worker_arg;
+        // optionally call user provided startup function
+        if (worker_arg->thread_startstop_func)
+        {
+            worker_arg->thread_startstop_func(unsigned(worker_arg->index), true, worker_arg->thread_startstop_userdata);
         }
+
+        // Set up chase lev deques
+        if constexpr (gc_use_workstealing)
+            s_tls.prepare_chase_lev(worker_arg->chase_lev_deques, worker_arg->index);
 
         // Set up thread fiber
         native::create_main_fiber(s_tls.thread_fiber);
 
+        // ------
+        // main work, on main worker fiber
         {
             s_tls.current_fiber_index = scheduler->acquireFreeFiber();
             auto& fiber = scheduler->mFibers[s_tls.current_fiber_index].native;
 
             native::switch_to_fiber(fiber, s_tls.thread_fiber);
         }
+        // returned, shutdown worker thread
+        // ------
+
+        // optionally call user provided shutdown function
+        if (worker_arg->thread_startstop_func)
+        {
+            worker_arg->thread_startstop_func(unsigned(worker_arg->index), false, worker_arg->thread_startstop_userdata);
+        }
+
+        // Clean up allocated argument
+        delete worker_arg;
 
         native::delete_main_fiber(s_tls.thread_fiber);
         native::end_current_thread();
@@ -813,8 +820,8 @@ void td::Scheduler::start(td::container::task main_task)
             auto constexpr thread_stack_overhead_safety = sizeof(void*) * 16;
 
             // Prepare worker arg
-            callback_funcs::worker_arg_t* const worker_arg = new callback_funcs::worker_arg_t{
-                callback_funcs::worker_arg_t{i, this, mConfig.worker_thread_start_function, mConfig.worker_thread_start_userdata, thread_deques}};
+            callback_funcs::worker_arg_t* const worker_arg = new callback_funcs::worker_arg_t{callback_funcs::worker_arg_t{
+                i, this, mConfig.worker_thread_startstop_function, mConfig.worker_thread_startstop_userdata, thread_deques}};
 
             bool success = false;
             if (mConfig.pin_threads_to_cores)
