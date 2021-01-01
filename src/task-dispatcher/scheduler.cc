@@ -4,7 +4,6 @@
 
 #include <immintrin.h>
 
-#include <clean-core/allocate.hh>
 #include <clean-core/array.hh>
 #include <clean-core/assert.hh>
 #include <clean-core/macros.hh>
@@ -197,33 +196,47 @@ struct Scheduler::callback_funcs
 
     struct worker_arg_t
     {
-        thread_index_t const index;
-        td::Scheduler* const owning_scheduler;
-        cc::vector<std::shared_ptr<container::spmc::Deque<container::task>>> const chase_lev_deques;
+        thread_index_t index;
+        td::Scheduler* owning_scheduler;
+        cc::function_ptr<void(unsigned, void*)> thread_start_func;
+        void* thread_start_userdata;
+        cc::vector<std::shared_ptr<container::spmc::Deque<container::task>>> chase_lev_deques;
     };
 
     static TD_NATIVE_THREAD_FUNC_DECL worker_func(void* arg_void)
     {
-        worker_arg_t const* const worker_arg = static_cast<worker_arg_t*>(arg_void);
+        Scheduler* scheduler;
+        {
+            worker_arg_t* const worker_arg = static_cast<worker_arg_t*>(arg_void);
 
-        // Register thread local current scheduler variable
-        Scheduler* const scheduler = worker_arg->owning_scheduler;
-        sCurrentScheduler = scheduler;
+            // Register thread local current scheduler variable
+            scheduler = worker_arg->owning_scheduler;
+            sCurrentScheduler = scheduler;
 
-        s_tls.reset();
-        s_tls.thread_index = worker_arg->index;
+            s_tls.reset();
+            s_tls.thread_index = worker_arg->index;
 
+            // worker thread startup tasks
 #ifdef TD_HAS_RICH_LOG
-        rlog::set_current_thread_name("td#%02u", worker_arg->index);
+            // set the rich-log thread name (shown as a prefix)
+            rlog::set_current_thread_name("td#%02u", worker_arg->index);
 #endif
-        native::set_current_thread_debug_name(int(worker_arg->index));
+            // set the thead name for debuggers
+            native::set_current_thread_debug_name(int(worker_arg->index));
 
-        // Set up chase lev deques
-        if constexpr (gc_use_workstealing)
-            s_tls.prepare_chase_lev(worker_arg->chase_lev_deques, worker_arg->index);
+            // optionally call the user provided function
+            if (worker_arg->thread_start_func)
+            {
+                worker_arg->thread_start_func(unsigned(worker_arg->index), worker_arg->thread_start_userdata);
+            }
 
-        // Clean up allocated argument
-        cc::free(worker_arg);
+            // Set up chase lev deques
+            if constexpr (gc_use_workstealing)
+                s_tls.prepare_chase_lev(worker_arg->chase_lev_deques, worker_arg->index);
+
+            // Clean up allocated argument
+            delete worker_arg;
+        }
 
         // Set up thread fiber
         native::create_main_fiber(s_tls.thread_fiber);
@@ -243,7 +256,7 @@ struct Scheduler::callback_funcs
 
     static void fiber_func(void* arg_void)
     {
-        Scheduler* scheduler = static_cast<class td::Scheduler*>(arg_void);
+        Scheduler* const scheduler = static_cast<class td::Scheduler*>(arg_void);
         scheduler->cleanUpPrevFiber();
 
         constexpr unsigned lc_max_backoff_pauses = 1 << 10;
@@ -625,9 +638,7 @@ int td::Scheduler::counterIncrement(td::Scheduler::atomic_counter_t& counter, in
 }
 
 td::Scheduler::Scheduler(scheduler_config const& config)
-  : mFiberStackSize(config.fiber_stack_size),
-    mNumCounters(config.max_num_counters),
-    mEnablePinThreads(config.pin_threads_to_cores),
+  : mConfig(config),
     mThreads(cc::fwd_array<worker_thread_t>::defaulted(config.num_threads)),
     mFibers(cc::fwd_array<worker_fiber_t>::defaulted(config.num_fibers)),
     mCounters(cc::fwd_array<atomic_counter_t>::defaulted(config.max_num_counters)),
@@ -708,7 +719,7 @@ int td::Scheduler::decrementCounter(td::handle::counter c, unsigned amount)
     return counterIncrement(mCounters[counter_index], int(amount) * -1);
 }
 
-td::Scheduler &td::Scheduler::Current() { return *sCurrentScheduler; }
+td::Scheduler& td::Scheduler::Current() { return *sCurrentScheduler; }
 
 bool td::Scheduler::IsInsideScheduler() { return sCurrentScheduler != nullptr; }
 
@@ -721,7 +732,7 @@ void td::Scheduler::start(td::container::task main_task)
     mThreads = cc::fwd_array<worker_thread_t>::defaulted(mThreads.size());
     mFibers = cc::fwd_array<worker_fiber_t>::defaulted(mFibers.size());
     mCounters = cc::fwd_array<atomic_counter_t>::defaulted(mCounters.size());
-    mCounterHandles.initialize(mNumCounters);
+    mCounterHandles.initialize(mConfig.max_num_counters);
 
     mIsShuttingDown.store(false, std::memory_order_seq_cst);
 
@@ -747,7 +758,7 @@ void td::Scheduler::start(td::container::task main_task)
     {
         main_thread.native = native::get_current_thread();
 
-        if (mEnablePinThreads)
+        if (mConfig.pin_threads_to_cores)
         {
             // lock main thread to core N
             // (core 0 is conventionally reserved for OS operations and driver interrupts, poor fit for the main thread)
@@ -768,7 +779,7 @@ void td::Scheduler::start(td::container::task main_task)
     // Populate fiber pool
     for (fiber_index_t i = 0; i < mFibers.size(); ++i)
     {
-        native::create_fiber(mFibers[i].native, callback_funcs::fiber_func, this, mFiberStackSize);
+        native::create_fiber(mFibers[i].native, callback_funcs::fiber_func, this, mConfig.fiber_stack_size);
         mIdleFibers.enqueue(i);
     }
 
@@ -802,19 +813,21 @@ void td::Scheduler::start(td::container::task main_task)
             auto constexpr thread_stack_overhead_safety = sizeof(void*) * 16;
 
             // Prepare worker arg
-            callback_funcs::worker_arg_t* const worker_arg = cc::alloc<callback_funcs::worker_arg_t>(callback_funcs::worker_arg_t{i, this, thread_deques});
+            callback_funcs::worker_arg_t* const worker_arg = new callback_funcs::worker_arg_t{
+                callback_funcs::worker_arg_t{i, this, mConfig.worker_thread_start_function, mConfig.worker_thread_start_userdata, thread_deques}};
 
             bool success = false;
-            if (mEnablePinThreads)
+            if (mConfig.pin_threads_to_cores)
             {
                 // Create the thread, pinned to core (i - 1), the main thread occupies core N
                 unsigned const pinned_core_index = i - 1;
-                success = native::create_thread(mFiberStackSize + thread_stack_overhead_safety, callback_funcs::worker_func, worker_arg,
+                success = native::create_thread(mConfig.fiber_stack_size + thread_stack_overhead_safety, callback_funcs::worker_func, worker_arg,
                                                 pinned_core_index, &thread.native);
             }
             else
             {
-                success = native::create_thread(mFiberStackSize + thread_stack_overhead_safety, callback_funcs::worker_func, worker_arg, &thread.native);
+                success = native::create_thread(mConfig.fiber_stack_size + thread_stack_overhead_safety, callback_funcs::worker_func, worker_arg,
+                                                &thread.native);
             }
             CC_ASSERT(success && "Failed to create worker thread");
         }
@@ -832,7 +845,7 @@ void td::Scheduler::start(td::container::task main_task)
 
         // reset the fiber, creating the primary fiber
         native::delete_fiber(initial_fiber.native);
-        native::create_fiber(initial_fiber.native, callback_funcs::primary_fiber_func, &primary_fiber_arg, mFiberStackSize);
+        native::create_fiber(initial_fiber.native, callback_funcs::primary_fiber_func, &primary_fiber_arg, mConfig.fiber_stack_size);
 
         // Launch the primary fiber
         native::switch_to_fiber(initial_fiber.native, s_tls.thread_fiber);

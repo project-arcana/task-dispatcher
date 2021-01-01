@@ -3,6 +3,7 @@
 #include <atomic>
 
 #include <clean-core/atomic_linked_pool.hh>
+#include <clean-core/function_ptr.hh>
 #include <clean-core/fwd_array.hh>
 #include <clean-core/typedefs.hh>
 
@@ -45,6 +46,11 @@ struct TD_API scheduler_config
     /// recommended on console-like plattforms
     /// can degrade performance on a multitasking (desktop) OS depending on other process load
     bool pin_threads_to_cores = false;
+
+    /// function that is called by each worker thread at launch,
+    /// argument is the worker thread index and optional userdata
+    cc::function_ptr<void(unsigned, void*)> worker_thread_start_function = nullptr;
+    void* worker_thread_start_userdata = nullptr;
 
 public:
     /// Some values in this config must be a power of 2
@@ -128,10 +134,8 @@ private:
     struct atomic_counter_t;
 
 private:
-    size_t const mFiberStackSize;
-    unsigned const mNumCounters;
-    bool const mEnablePinThreads;
     std::atomic_bool mIsShuttingDown = {false};
+    scheduler_config mConfig;
 
     cc::fwd_array<worker_thread_t> mThreads;
     cc::fwd_array<worker_fiber_t> mFibers;
