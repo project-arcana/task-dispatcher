@@ -123,6 +123,7 @@ struct Scheduler::tls_t
     fiber_destination_e previous_fiber_dest = fiber_destination_e::none;
 
     thread_index_t thread_index = invalid_thread; // index of this thread in the scheduler::mThreads
+    bool is_thread_waiting = false;
 
     container::spmc::Worker<container::task> chase_lev_worker;
     cc::vector<container::spmc::Stealer<container::task>> chase_lev_stealers;
@@ -135,6 +136,7 @@ struct Scheduler::tls_t
         previous_fiber_index = invalid_fiber;
         previous_fiber_dest = fiber_destination_e::none;
         thread_index = invalid_thread;
+        is_thread_waiting = false;
         chase_lev_worker.setDeque(nullptr);
         chase_lev_stealers.clear();
         last_steal_target = invalid_thread;
@@ -300,12 +302,13 @@ struct Scheduler::callback_funcs
                 }
                 else
                 {
-                    if (backoff_num_pauses == lc_max_backoff_pauses)
+                    // only perform OS wait if backoff is at maximum and this thread is not waiting
+                    if (backoff_num_pauses == lc_max_backoff_pauses && !s_tls.is_thread_waiting)
                     {
                         // reached max backoff, wait for global event
 
                         // wait until the global event is signalled, with timeout
-                        auto const signalled = native::wait_for_event(*scheduler->mEventWorkAvailable, 50);
+                        bool signalled = native::wait_for_event(*scheduler->mEventWorkAvailable, 10);
 
                         if constexpr (gc_warn_timeouts)
                         {
@@ -695,6 +698,8 @@ int td::Scheduler::wait(handle::counter c, bool pinnned, int target)
     // The current fiber is now waiting, but not yet cleaned up
     mFibers[s_tls.current_fiber_index].is_waiting_cleaned_up.store(false, std::memory_order_release);
 
+    s_tls.is_thread_waiting = true;
+
     int counter_value_before_wait = -1;
     if (counterAddWaitingFiber(mCounters[counter_index], s_tls.current_fiber_index, pinnned ? s_tls.thread_index : invalid_thread, target, counter_value_before_wait))
     {
@@ -707,6 +712,8 @@ int td::Scheduler::wait(handle::counter c, bool pinnned, int target)
         //        KW_LOG_DIAG("[wait] Waiting for counter " << int(counter_index) << ", yielding");
         yieldToFiber(acquireFreeFiber(), fiber_destination_e::waiting);
     }
+
+    s_tls.is_thread_waiting = false;
 
     // Either the counter was already on target, or this fiber has been awakened because it is now on target,
     // return execution
