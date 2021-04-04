@@ -1,6 +1,7 @@
 #pragma once
 
 #include <atomic>
+#include <cstdint>
 
 #include <clean-core/atomic_linked_pool.hh>
 #include <clean-core/function_ptr.hh>
@@ -26,21 +27,21 @@ struct TD_API scheduler_config
 {
     /// amount of fibers created
     /// limits the amount of concurrently waiting tasks
-    unsigned num_fibers = 256;
+    uint32_t num_fibers = 256;
 
     /// amount of threads used
     /// scheduler creates (num - 1) worker threads, the OS thread calling start() is the main thread
-    unsigned num_threads = system::num_logical_cores();
+    uint32_t num_threads = system::num_logical_cores();
 
     /// amount of atomic counters created
     /// limits the amount of concurrently live td::sync objects (lifetime: from first submit() to wait())
-    unsigned max_num_counters = 512;
+    uint32_t max_num_counters = 512;
 
     /// amount of tasks that can be concurrently in flight
-    unsigned max_num_tasks = 4096;
+    uint32_t max_num_tasks = 4096;
 
     /// stack size of each fiber in bytes
-    cc::size_t fiber_stack_size = 64 * 1024;
+    uint32_t fiber_stack_size = 64 * 1024;
 
     /// whether to lock the main and worker threads to logical cores
     /// recommended on console-like plattforms
@@ -49,8 +50,13 @@ struct TD_API scheduler_config
 
     /// functions that is called by each worker thread once at launch and once at shutdown,
     /// called as func(worker_index, is_start, userdata)
-    cc::function_ptr<void(unsigned, bool, void*)> worker_thread_startstop_function = nullptr;
+    cc::function_ptr<void(uint32_t, bool, void*)> worker_thread_startstop_function = nullptr;
     void* worker_thread_startstop_userdata = nullptr;
+
+    /// function that is used as a SEH filter in the global __try/__except block of worker threads (Win32 only)
+    /// arguments: EXCEPTION_POINTERS*, uint32_t thread index
+    /// returns CONTINUE_EXECUTION (-1), CONTINUE_SEARCH (0), or EXECUTE_HANDLER (1)
+    cc::function_ptr<int32_t(void*, uint32_t)> worker_thread_seh_filter = nullptr;
 
 public:
     /// Some values in this config must be a power of 2
@@ -92,7 +98,7 @@ public:
     [[nodiscard]] bool releaseCounterIfOnTarget(handle::counter c, int target);
 
     /// Enqueue the given tasks and associate them with a counter object
-    void submitTasks(container::task* tasks, unsigned num_tasks, handle::counter c);
+    void submitTasks(container::task* tasks, uint32_t num_tasks, handle::counter c);
 
     /// Resume execution after the given counter has reached a set target
     /// returns the counter value before the wait
@@ -100,35 +106,35 @@ public:
 
     /// experimental: manually increment a counter, preventing waits to resolve
     /// returns the new counter state
-    int incrementCounter(handle::counter c, unsigned amount = 1);
+    int incrementCounter(handle::counter c, uint32_t amount = 1);
 
     /// experimental: manually decrement a counter, potentially causing waits on it to resolve
     /// WARNING: this should not be called without prior calls to incrementCounter
     /// returns the new counter state
-    int decrementCounter(handle::counter c, unsigned amount = 1);
+    int decrementCounter(handle::counter c, uint32_t amount = 1);
 
     /// Returns the amount of threads this scheduler controls
-    [[nodiscard]] unsigned getNumThreads() const { return unsigned(mThreads.size()); }
+    [[nodiscard]] uint32_t getNumThreads() const { return uint32_t(mThreads.size()); }
 
     /// Returns the scheduler running the current task
     [[nodiscard]] static Scheduler& Current();
     /// Returns true if called from inside the scheduler
     [[nodiscard]] static bool IsInsideScheduler();
-    /// Returns the index of the calling thread, relative to its owning scheduler. returns unsigned(-1) on unowned threads
-    [[nodiscard]] static unsigned CurrentThreadIndex();
-    /// Returns the index of the calling fiber, relative to its owning scheduler. returns unsigned(-1) on unowned threads
-    [[nodiscard]] static unsigned CurrentFiberIndex();
+    /// Returns the index of the calling thread, relative to its owning scheduler. returns uint32_t(-1) on unowned threads
+    [[nodiscard]] static uint32_t CurrentThreadIndex();
+    /// Returns the index of the calling fiber, relative to its owning scheduler. returns uint32_t(-1) on unowned threads
+    [[nodiscard]] static uint32_t CurrentFiberIndex();
 
 public:
-    using fiber_index_t = unsigned;
-    using thread_index_t = unsigned;
-    using counter_index_t = cc::uint16; // Must fit into task metadata
+    using fiber_index_t = uint32_t;
+    using thread_index_t = uint32_t;
+    using counter_index_t = uint16_t; // Must fit into task metadata
     static auto constexpr invalid_fiber = fiber_index_t(-1);
     static auto constexpr invalid_thread = thread_index_t(-1);
     static auto constexpr invalid_counter = counter_index_t(-1);
 
 private:
-    enum class fiber_destination_e : cc::uint8;
+    enum class fiber_destination_e : uint8_t;
     struct worker_thread_t;
     struct worker_fiber_t;
     struct atomic_counter_t;
@@ -177,7 +183,7 @@ private:
 
     int counterIncrement(atomic_counter_t& counter, int amount = 1);
 
-    bool enqueueTasks(td::container::task* tasks, unsigned num_tasks, handle::counter counter);
+    bool enqueueTasks(td::container::task* tasks, uint32_t num_tasks, handle::counter counter);
 
     Scheduler(Scheduler const& other) = delete;
     Scheduler(Scheduler&& other) noexcept = delete;

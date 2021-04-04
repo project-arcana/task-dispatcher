@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstddef>
+#include <cstdint>
 
 #include "api.hh"
 
@@ -10,6 +11,6 @@ namespace td::system
 inline size_t constexpr l1_cacheline_size = 64; // std::hardware_destructive_interference_size assumption, verified in .cc
 
 // == Run time system info ==
-[[nodiscard]] TD_API unsigned num_logical_cores() noexcept;  // std::thread::hardware_concurrency
-[[nodiscard]] TD_API unsigned num_physical_cores() noexcept; // platform-specific, expensive on Windows
+[[nodiscard]] TD_API uint32_t num_logical_cores() noexcept;  // std::thread::hardware_concurrency
+[[nodiscard]] TD_API uint32_t num_physical_cores() noexcept; // platform-specific, expensive on Windows
 }
