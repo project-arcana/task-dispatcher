@@ -53,10 +53,10 @@ struct TD_API scheduler_config
     cc::function_ptr<void(uint32_t, bool, void*)> worker_thread_startstop_function = nullptr;
     void* worker_thread_startstop_userdata = nullptr;
 
-    /// function that is used as a SEH filter in the global __try/__except block of worker threads (Win32 only)
-    /// arguments: EXCEPTION_POINTERS*, uint32_t thread index
+    /// function that is used as a SEH filter in the global __try/__except block of each fiber (Win32 only)
+    /// argument is EXCEPTION_POINTERS*
     /// returns CONTINUE_EXECUTION (-1), CONTINUE_SEARCH (0), or EXECUTE_HANDLER (1)
-    cc::function_ptr<int32_t(void*, uint32_t)> worker_thread_seh_filter = nullptr;
+    cc::function_ptr<int32_t(void*)> fiber_seh_filter = nullptr;
 
 public:
     /// Some values in this config must be a power of 2

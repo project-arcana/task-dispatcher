@@ -202,7 +202,6 @@ struct Scheduler::callback_funcs
         td::Scheduler* owning_scheduler;
         cc::function_ptr<void(uint32_t, bool, void*)> thread_startstop_func;
         void* thread_startstop_userdata;
-        cc::function_ptr<int32_t(void*, uint32_t)> seh_handler;
 
         cc::vector<std::shared_ptr<container::spmc::Deque<container::task>>> chase_lev_deques;
     };
@@ -211,66 +210,57 @@ struct Scheduler::callback_funcs
     {
         worker_arg_t* const worker_arg = static_cast<worker_arg_t*>(arg_void);
 
-#ifdef CC_OS_WINDOWS
-        __try
-#endif
-        {
-            // Register thread local current scheduler variable
-            Scheduler* const scheduler = worker_arg->owning_scheduler;
-            sCurrentScheduler = scheduler;
+        // Register thread local current scheduler variable
+        Scheduler* const scheduler = worker_arg->owning_scheduler;
+        sCurrentScheduler = scheduler;
 
-            s_tls.reset();
-            s_tls.thread_index = worker_arg->index;
+        s_tls.reset();
+        s_tls.thread_index = worker_arg->index;
 
-            // worker thread startup tasks
+        // worker thread startup tasks
 #ifdef TD_HAS_RICH_LOG
-            // set the rich-log thread name (shown as a prefix)
-            rlog::set_current_thread_name("td#%02u", worker_arg->index);
+        // set the rich-log thread name (shown as a prefix)
+        rlog::set_current_thread_name("td#%02u", worker_arg->index);
 #endif
-            // set the thead name for debuggers
-            native::set_current_thread_debug_name(int(worker_arg->index));
+        // set the thead name for debuggers
+        native::set_current_thread_debug_name(int(worker_arg->index));
 
-            // optionally call user provided startup function
-            if (worker_arg->thread_startstop_func)
-            {
-                worker_arg->thread_startstop_func(uint32_t(worker_arg->index), true, worker_arg->thread_startstop_userdata);
-            }
-
-            // Set up chase lev deques
-            if constexpr (gc_use_workstealing)
-                s_tls.prepare_chase_lev(worker_arg->chase_lev_deques, worker_arg->index);
-
-            // Set up thread fiber
-            native::create_main_fiber(s_tls.thread_fiber);
-
-            // ------
-            // main work, on main worker fiber
-            {
-                s_tls.current_fiber_index = scheduler->acquireFreeFiber();
-                auto& fiber = scheduler->mFibers[s_tls.current_fiber_index].native;
-
-                native::switch_to_fiber(fiber, s_tls.thread_fiber);
-            }
-            // returned, shutdown worker thread
-            // ------
-
-            // optionally call user provided shutdown function
-            if (worker_arg->thread_startstop_func)
-            {
-                worker_arg->thread_startstop_func(uint32_t(worker_arg->index), false, worker_arg->thread_startstop_userdata);
-            }
-
-            // Clean up allocated argument
-            delete worker_arg;
-
-            native::delete_main_fiber(s_tls.thread_fiber);
-            native::end_current_thread();
-        }
-#ifdef CC_OS_WINDOWS
-        __except (worker_arg->seh_handler(GetExceptionInformation(), uint32_t(worker_arg->index)))
+        // optionally call user provided startup function
+        if (worker_arg->thread_startstop_func)
         {
+            worker_arg->thread_startstop_func(uint32_t(worker_arg->index), true, worker_arg->thread_startstop_userdata);
         }
-#endif // CC_OS_WINDOWS
+
+        // Set up chase lev deques
+        if constexpr (gc_use_workstealing)
+            s_tls.prepare_chase_lev(worker_arg->chase_lev_deques, worker_arg->index);
+
+        // Set up thread fiber
+        native::create_main_fiber(s_tls.thread_fiber);
+
+        // ------
+        // main work, on main worker fiber
+        {
+            s_tls.current_fiber_index = scheduler->acquireFreeFiber();
+            auto& fiber = scheduler->mFibers[s_tls.current_fiber_index].native;
+
+            native::switch_to_fiber(fiber, s_tls.thread_fiber);
+        }
+        // returned, shutdown worker thread
+        // ------
+
+        // optionally call user provided shutdown function
+        if (worker_arg->thread_startstop_func)
+        {
+            worker_arg->thread_startstop_func(uint32_t(worker_arg->index), false, worker_arg->thread_startstop_userdata);
+        }
+
+        // Clean up allocated argument
+        delete worker_arg;
+
+        native::delete_main_fiber(s_tls.thread_fiber);
+        native::end_current_thread();
+
 
         TD_NATIVE_THREAD_FUNC_END;
     }
@@ -278,81 +268,92 @@ struct Scheduler::callback_funcs
     static void fiber_func(void* arg_void)
     {
         Scheduler* const scheduler = static_cast<class td::Scheduler*>(arg_void);
-        scheduler->cleanUpPrevFiber();
 
-        constexpr uint32_t lc_max_backoff_pauses = 1 << 10;
-        constexpr uint32_t lc_min_backoff_pauses = 1;
-        uint32_t backoff_num_pauses = lc_min_backoff_pauses;
-
-        container::task task;
-        while (!scheduler->mIsShuttingDown.load(std::memory_order_relaxed))
+#ifdef CC_OS_WINDOWS
+        __try
+#endif
         {
-            if (scheduler->getNextTask(task))
+            scheduler->cleanUpPrevFiber();
+
+            constexpr uint32_t lc_max_backoff_pauses = 1 << 10;
+            constexpr uint32_t lc_min_backoff_pauses = 1;
+            uint32_t backoff_num_pauses = lc_min_backoff_pauses;
+
+            container::task task;
+            while (!scheduler->mIsShuttingDown.load(std::memory_order_relaxed))
             {
-                // work available, reset backoff
-                backoff_num_pauses = lc_min_backoff_pauses;
-
-                // Received a task, execute it
-                task.execute_and_cleanup();
-
-                // The task returned, decrement the counter
-                scheduler->counterIncrement(scheduler->mCounters[task.get_metadata()], -1);
-            }
-            else
-            {
-                // No tasks available
-
-                if constexpr (gc_never_wait)
+                if (scheduler->getNextTask(task))
                 {
-                    // Immediately retry
+                    // work available, reset backoff
+                    backoff_num_pauses = lc_min_backoff_pauses;
 
-                    // SSE2 pause instruction
-                    // hints the CPU that this is a spin-wait, improving power usage
-                    // and post-loop wakeup time (falls back to nop on pre-SSE2)
-                    // (not at all OS scheduler related, locks cores at 100%)
-                    _mm_pause();
+                    // Received a task, execute it
+                    task.execute_and_cleanup();
+
+                    // The task returned, decrement the counter
+                    scheduler->counterIncrement(scheduler->mCounters[task.get_metadata()], -1);
                 }
                 else
                 {
-                    // only perform OS wait if backoff is at maximum and this thread is not waiting
-                    if (backoff_num_pauses == lc_max_backoff_pauses && !s_tls.is_thread_waiting)
+                    // No tasks available
+
+                    if constexpr (gc_never_wait)
                     {
-                        // reached max backoff, wait for global event
+                        // Immediately retry
 
-                        // wait until the global event is signalled, with timeout
-                        bool signalled = native::wait_for_event(*scheduler->mEventWorkAvailable, 10);
-
-                        if constexpr (gc_warn_timeouts)
+                        // SSE2 pause instruction
+                        // hints the CPU that this is a spin-wait, improving power usage
+                        // and post-loop wakeup time (falls back to nop on pre-SSE2)
+                        // (not at all OS scheduler related, locks cores at 100%)
+                        _mm_pause();
+                    }
+                    else
+                    {
+                        // only perform OS wait if backoff is at maximum and this thread is not waiting
+                        if (backoff_num_pauses == lc_max_backoff_pauses && !s_tls.is_thread_waiting)
                         {
-                            if (!signalled)
+                            // reached max backoff, wait for global event
+
+                            // wait until the global event is signalled, with timeout
+                            bool signalled = native::wait_for_event(*scheduler->mEventWorkAvailable, 10);
+
+                            if constexpr (gc_warn_timeouts)
                             {
-                                std::fprintf(stderr, "[td] Scheduler warning: Work event wait timed out\n");
+                                if (!signalled)
+                                {
+                                    std::fprintf(stderr, "[td] Scheduler warning: Work event wait timed out\n");
+                                }
+                            }
+                            else
+                            {
+                                (void)signalled;
                             }
                         }
                         else
                         {
-                            (void)signalled;
-                        }
-                    }
-                    else
-                    {
-                        // increase backoff pauses exponentially
-                        backoff_num_pauses = cc::min(lc_max_backoff_pauses, backoff_num_pauses << 1);
+                            // increase backoff pauses exponentially
+                            backoff_num_pauses = cc::min(lc_max_backoff_pauses, backoff_num_pauses << 1);
 
-                        // perform pauses
-                        for (auto _ = 0u; _ < backoff_num_pauses; ++_)
-                        {
-                            _mm_pause();
+                            // perform pauses
+                            for (auto _ = 0u; _ < backoff_num_pauses; ++_)
+                            {
+                                _mm_pause();
+                            }
                         }
                     }
                 }
             }
+
+            // Switch back to thread fiber of the current thread
+            native::switch_to_fiber(s_tls.thread_fiber, scheduler->mFibers[s_tls.current_fiber_index].native);
+
+            CC_RUNTIME_ASSERT(false && "Reached end of fiber_func");
         }
-
-        // Switch back to thread fiber of the current thread
-        native::switch_to_fiber(s_tls.thread_fiber, scheduler->mFibers[s_tls.current_fiber_index].native);
-
-        CC_RUNTIME_ASSERT(false && "Reached end of fiber_func");
+#ifdef CC_OS_WINDOWS
+        __except (scheduler->mConfig.fiber_seh_filter(GetExceptionInformation()))
+        {
+        }
+#endif // CC_OS_WINDOWS
     }
 
     static void primary_fiber_func(void* arg_void)
@@ -760,6 +761,12 @@ void td::Scheduler::start(td::container::task main_task)
     mCounters = cc::fwd_array<atomic_counter_t>::defaulted(mCounters.size());
     mCounterHandles.initialize(mConfig.max_num_counters);
 
+    if (!mConfig.fiber_seh_filter)
+    {
+        // use an empty SEH handler if none is specified
+        mConfig.fiber_seh_filter = [](void*) -> int32_t { return 0; };
+    }
+
     mIsShuttingDown.store(false, std::memory_order_seq_cst);
 
     native::create_event(mEventWorkAvailable);
@@ -845,13 +852,6 @@ void td::Scheduler::start(td::container::task main_task)
             worker_arg->thread_startstop_func = mConfig.worker_thread_startstop_function;
             worker_arg->thread_startstop_userdata = mConfig.worker_thread_startstop_userdata;
             worker_arg->chase_lev_deques = thread_deques;
-            worker_arg->seh_handler = mConfig.worker_thread_seh_filter;
-
-            if (!worker_arg->seh_handler)
-            {
-                // use an empty SEH handler if none is specified
-                worker_arg->seh_handler = [](void*, uint32_t) -> int32_t { return 0; };
-            }
 
             bool success = false;
             if (mConfig.pin_threads_to_cores)
