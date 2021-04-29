@@ -18,9 +18,9 @@ static_assert(td::system::l1_cacheline_size == std::hardware_destructive_interfe
 // Clang doesn't support std::hardware_destructive_interference yet
 #endif
 
-unsigned td::system::num_logical_cores() noexcept { return std::thread::hardware_concurrency(); }
+uint32_t td::system::num_logical_cores() noexcept { return std::thread::hardware_concurrency(); }
 
-unsigned td::system::num_physical_cores() noexcept
+uint32_t td::system::num_physical_cores() noexcept
 {
 #ifdef CC_OS_WINDOWS
     cc::array<std::byte> buffer;

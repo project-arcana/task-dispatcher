@@ -3,6 +3,7 @@
 #include <atomic>
 
 #include <clean-core/array.hh>
+#include <clean-core/bits.hh>
 
 namespace td::container
 {
@@ -13,6 +14,7 @@ struct VersionRing
 {
     static_assert(N > 0);
     static_assert(N < unsigned(-1) / 2, "VersionRing too large");
+    static_assert(cc::is_pow2(N), "VersionRing N must be power of two");
 
 public:
     explicit VersionRing() = default;
@@ -24,13 +26,13 @@ public:
     [[nodiscard]] unsigned acquire(T value)
     {
         auto const handle = mVersion.fetch_add(1, std::memory_order_acquire);
-        mData[handle % N] = std::move(value);
+        this->get(handle) = value;
         return handle;
     }
 
     /// Accesses the slot in the ring buffer
-    [[nodiscard]] T& get(unsigned handle) { return mData[handle % N]; }
-    [[nodiscard]] T const& get(unsigned handle) const { return mData[handle % N]; }
+    [[nodiscard]] T& get(unsigned handle) { return mData[cc::mod_pow2(handle, N)]; }
+    [[nodiscard]] T const& get(unsigned handle) const { return mData[cc::mod_pow2(handle, N)]; }
 
     void reset() { mVersion.store(0, std::memory_order_release); }
 
