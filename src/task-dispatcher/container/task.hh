@@ -1,13 +1,14 @@
 #pragma once
 
 #include <cstddef>
+#include <cstdint>
+
 #include <type_traits>
 
 #include <clean-core/enable_if.hh>
 #include <clean-core/forward.hh>
 #include <clean-core/move.hh>
 #include <clean-core/new.hh>
-#include <clean-core/typedefs.hh>
 
 #ifdef TD_ALLOW_HEAP_TASKS
 #include <clean-core/unique_ptr.hh>
@@ -26,13 +27,13 @@ namespace td::container
 struct task
 {
 public:
-    using default_metadata_t = cc::uint16;
+    using default_metadata_t = uint16_t;
     using function_ptr_t = void (*)(void*);
-    using execute_and_cleanup_function_t = void(cc::byte*);
+    using execute_and_cleanup_function_t = void(std::byte*);
 
     static auto constexpr task_size = td::system::l1_cacheline_size;
     static constexpr auto usable_buffer_size = task_size - sizeof(default_metadata_t) - sizeof(execute_and_cleanup_function_t*);
-    using buffer_t = cc::byte[usable_buffer_size];
+    using buffer_t = std::byte[usable_buffer_size];
 
 private:
     alignas(alignof(std::max_align_t)) buffer_t _buffer;
@@ -66,7 +67,7 @@ public:
         {
             new (cc::placement_new, _buffer) T(cc::move(l));
 
-            _exec_cleanup_func = [](cc::byte* buf) {
+            _exec_cleanup_func = [](std::byte* buf) {
                 T& ref = *reinterpret_cast<T*>(buf);
                 ref.operator()();
                 ref.~T();
@@ -78,7 +79,7 @@ public:
             auto heap_lambda = cc::make_unique<T>(cc::move(l));
             new (cc::placement_new, _buffer) cc::unique_ptr<T>(cc::move(heap_lambda));
 
-            _exec_cleanup_func = [](cc::byte* buf) {
+            _exec_cleanup_func = [](std::byte* buf) {
                 cc::unique_ptr<T>& ref = *reinterpret_cast<cc::unique_ptr<T>*>(buf);
                 ref->operator()();
                 ref.~unique_ptr<T>();
@@ -97,7 +98,7 @@ public:
         new (cc::placement_new, _buffer) fptr_t(func_ptr);
         new (cc::placement_new, _buffer + sizeof(fptr_t)) void*(userdata);
 
-        _exec_cleanup_func = [](cc::byte* buf) {
+        _exec_cleanup_func = [](std::byte* buf) {
             fptr_t& ref = *reinterpret_cast<fptr_t*>(buf);
             void*& ref_arg = *reinterpret_cast<void**>(buf + sizeof(fptr_t));
             ref(ref_arg);

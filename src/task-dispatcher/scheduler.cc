@@ -1,5 +1,6 @@
 #include "scheduler.hh"
 
+#include <cstdint>
 #include <cstdio>
 
 #include <immintrin.h>
@@ -86,7 +87,7 @@ struct Scheduler::atomic_counter_t
     friend td::Scheduler;
 };
 
-enum class Scheduler::fiber_destination_e : cc::uint8
+enum class Scheduler::fiber_destination_e : uint8_t
 {
     none,
     waiting,
