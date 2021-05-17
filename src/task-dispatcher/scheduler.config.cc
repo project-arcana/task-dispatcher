@@ -11,6 +11,11 @@ void td::scheduler_config::ceil_to_pow2()
 
 bool td::scheduler_config::is_valid() const
 {
+    if (!static_alloc)
+    {
+        return false;
+    }
+
     auto f_is_positive = [](auto v) -> bool { return v > 0; };
 
     bool valid = true;
