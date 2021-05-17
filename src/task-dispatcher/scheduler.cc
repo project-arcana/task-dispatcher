@@ -662,22 +662,23 @@ int td::Scheduler::counterIncrement(td::Scheduler::atomic_counter_t& counter, in
 }
 
 td::Scheduler::Scheduler(scheduler_config const& config)
-  : mConfig(config),
-    mThreads(cc::fwd_array<worker_thread_t>::defaulted(config.num_threads)),
-    mFibers(cc::fwd_array<worker_fiber_t>::defaulted(config.num_fibers)),
-    mCounters(cc::fwd_array<atomic_counter_t>::defaulted(config.max_num_counters)),
+  : mConfig(config), //
     mTasks(config.max_num_tasks),
-    mIdleFibers(mFibers.size()),
-    mResumableFibers(mFibers.size()),
+    mIdleFibers(config.num_fibers),
+    mResumableFibers(config.num_fibers),
     mFreeCounters(config.max_num_counters)
 {
-    mEventWorkAvailable = new native::event_t();
-
     CC_ASSERT(config.is_valid() && "Scheduler config invalid, use scheduler_config_t::validate()");
     CC_ASSERT((config.num_threads <= system::num_logical_cores()) && "More threads than physical cores configured");
+
+    mEventWorkAvailable = config.static_alloc->new_t<native::event_t>();
 }
 
-td::Scheduler::~Scheduler() { delete mEventWorkAvailable; }
+td::Scheduler::~Scheduler()
+{
+    mConfig.static_alloc->delete_t(mEventWorkAvailable);
+    mEventWorkAvailable = nullptr;
+}
 
 void td::Scheduler::submitTasks(td::container::task* tasks, uint32_t num_tasks, handle::counter c)
 {
@@ -757,10 +758,11 @@ uint32_t td::Scheduler::CurrentFiberIndex() { return s_tls.current_fiber_index; 
 void td::Scheduler::start(td::container::task main_task)
 {
     // Re-default all arrays, as multiple starts are possible
-    mThreads = cc::fwd_array<worker_thread_t>::defaulted(mThreads.size());
-    mFibers = cc::fwd_array<worker_fiber_t>::defaulted(mFibers.size());
-    mCounters = cc::fwd_array<atomic_counter_t>::defaulted(mCounters.size());
-    mCounterHandles.initialize(mConfig.max_num_counters);
+    mThreads.reset(mConfig.static_alloc, mConfig.num_threads);
+    mFibers.reset(mConfig.static_alloc, mConfig.num_fibers);
+    mCounters.reset(mConfig.static_alloc, mConfig.max_num_counters);
+
+    mCounterHandles.initialize(mConfig.max_num_counters, mConfig.static_alloc);
 
     if (!mConfig.fiber_seh_filter)
     {

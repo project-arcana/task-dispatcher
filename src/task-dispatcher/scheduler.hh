@@ -5,7 +5,7 @@
 
 #include <clean-core/atomic_linked_pool.hh>
 #include <clean-core/function_ptr.hh>
-#include <clean-core/fwd_array.hh>
+#include <clean-core/alloc_array.hh>
 
 #include <task-dispatcher/common/api.hh>
 #include <task-dispatcher/common/system_info.hh>
@@ -56,6 +56,9 @@ struct TD_API scheduler_config
     /// argument is EXCEPTION_POINTERS*
     /// returns CONTINUE_EXECUTION (-1), CONTINUE_SEARCH (0), or EXECUTE_HANDLER (1)
     cc::function_ptr<int32_t(void*)> fiber_seh_filter = nullptr;
+
+    /// the source for static allocations, only hit during init and shutdown
+    cc::allocator* static_alloc = cc::system_allocator;
 
 public:
     /// Some values in this config must be a power of 2
@@ -142,9 +145,9 @@ private:
     std::atomic_bool mIsShuttingDown = {false};
     scheduler_config mConfig;
 
-    cc::fwd_array<worker_thread_t> mThreads;
-    cc::fwd_array<worker_fiber_t> mFibers;
-    cc::fwd_array<atomic_counter_t> mCounters;
+    cc::alloc_array<worker_thread_t> mThreads;
+    cc::alloc_array<worker_fiber_t> mFibers;
+    cc::alloc_array<atomic_counter_t> mCounters;
 
     // Queues
     container::MPMCQueue<container::task> mTasks;
