@@ -10,6 +10,8 @@
 #include <clean-core/assert.hh>
 #include <clean-core/native/win32_sanitized.hh>
 
+// work-around for some versions of cygwin
+extern "C" inline int __gxx_personality_v0() { return 0; }
 
 #else
 
@@ -71,8 +73,6 @@ inline void delete_fiber(fiber_t& fib, allocator const& = default_alloc) { ::Del
 
 inline void switch_to_fiber(fiber_t fib, fiber_t) { ::SwitchToFiber(fib.native); }
 
-// work-around for some versions of cygwin
-extern "C" inline int __gxx_personality_v0() { return 0; }
 
 #else
 // Fiber API avoiding naive ucontext performance pitfalls for unix
