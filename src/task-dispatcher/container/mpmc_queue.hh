@@ -3,7 +3,9 @@
 #include <atomic>
 #include <cstdint>
 
+#include <clean-core/alloc_array.hh>
 #include <clean-core/assert.hh>
+#include <clean-core/bits.hh>
 
 #include <task-dispatcher/common/system_info.hh>
 
@@ -16,16 +18,19 @@ template <typename T>
 class MPMCQueue
 {
 public:
-    MPMCQueue(size_t buffer_size) : mBuffer(new cell[buffer_size]()), mBufferMask(buffer_size - 1)
+    MPMCQueue(size_t buffer_size, cc::allocator* allocator = cc::system_allocator) : mBufferMask(buffer_size - 1)
     {
-        CC_ASSERT((buffer_size >= 2) && ((buffer_size & (buffer_size - 1)) == 0) && "MPMCQueue size not a power of two");
-        for (size_t i = 0; i != buffer_size; i += 1)
+        CC_ASSERT(buffer_size >= 2 && cc::is_pow2(buffer_size) && "MPMCQueue size not a power of two");
+
+        mBuffer.reset(allocator, buffer_size);
+        for (size_t i = 0; i != buffer_size; ++i)
+        {
             mBuffer[i].sequence_.store(i, std::memory_order_relaxed);
+        }
+
         mEnqueuePos.store(0, std::memory_order_relaxed);
         mDequeuePos.store(0, std::memory_order_relaxed);
     }
-
-    ~MPMCQueue() { delete[] mBuffer; }
 
     bool enqueue(const T& data)
     {
@@ -82,8 +87,9 @@ private:
         T data_;
     };
 
-    alignas(system::l1_cacheline_size) cell* const mBuffer;
-    size_t const mBufferMask;
+    alignas(system::l1_cacheline_size) cc::alloc_array<cell> mBuffer;
+
+    size_t mBufferMask;
 
     alignas(system::l1_cacheline_size) std::atomic<size_t> mEnqueuePos;
     alignas(system::l1_cacheline_size) std::atomic<size_t> mDequeuePos;

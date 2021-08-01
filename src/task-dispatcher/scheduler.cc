@@ -411,7 +411,8 @@ int td::Scheduler::releaseCounter(td::handle::counter c)
     int const last_state = mCounters[freed_counter].count.load(std::memory_order_acquire);
 
     mCounterHandles.release(c._value);
-    mFreeCounters.enqueue(freed_counter);
+    bool success = mFreeCounters.enqueue(freed_counter);
+    CC_ASSERT(success);
 
     return last_state;
 }
@@ -426,7 +427,8 @@ bool td::Scheduler::releaseCounterIfOnTarget(td::handle::counter c, int target)
     }
 
     mCounterHandles.release(c._value);
-    mFreeCounters.enqueue(freed_counter);
+    bool success = mFreeCounters.enqueue(freed_counter);
+    CC_ASSERT(success);
 
     return true;
 }
@@ -451,7 +453,10 @@ void td::Scheduler::cleanUpPrevFiber()
         return;
     case fiber_destination_e::pool:
         // The fiber is being pooled, add it to the idle fibers
-        mIdleFibers.enqueue(s_tls.previous_fiber_index);
+        {
+            bool success = mIdleFibers.enqueue(s_tls.previous_fiber_index);
+            CC_ASSERT(success);
+        }
         break;
     case fiber_destination_e::waiting:
         // The fiber is waiting for a dependency, and can be safely resumed from now on
@@ -514,7 +519,8 @@ bool td::Scheduler::getNextTask(td::container::task& task)
                 // Received fiber is not cleaned up yet, re-enqueue (very rare)
                 // This should only happen if mResumableFibers is almost empty, and
                 // the latency impact is low in those cases
-                mResumableFibers.enqueue(resumable_fiber_index);
+                bool success = mResumableFibers.enqueue(resumable_fiber_index);
+                CC_ASSERT(success);
 
                 // signal the global event
                 native::signal_event(*mEventWorkAvailable);
@@ -663,10 +669,10 @@ int td::Scheduler::counterIncrement(td::Scheduler::atomic_counter_t& counter, in
 
 td::Scheduler::Scheduler(scheduler_config const& config)
   : mConfig(config), //
-    mTasks(config.max_num_tasks),
-    mIdleFibers(config.num_fibers),
-    mResumableFibers(config.num_fibers),
-    mFreeCounters(config.max_num_counters)
+    mTasks(config.max_num_tasks, config.static_alloc),
+    mIdleFibers(config.num_fibers, config.static_alloc),
+    mResumableFibers(config.num_fibers, config.static_alloc),
+    mFreeCounters(config.max_num_counters, config.static_alloc)
 {
     CC_ASSERT(config.is_valid() && "Scheduler config invalid, use scheduler_config_t::validate()");
     CC_ASSERT((config.num_threads <= system::num_logical_cores()) && "More threads than physical cores configured");
@@ -816,7 +822,8 @@ void td::Scheduler::start(td::container::task main_task)
     for (fiber_index_t i = 0; i < mFibers.size(); ++i)
     {
         native::create_fiber(mFibers[i].native, callback_funcs::fiber_func, this, mConfig.fiber_stack_size);
-        mIdleFibers.enqueue(i);
+        bool success = mIdleFibers.enqueue(i);
+        CC_ASSERT(success);
     }
 
     // Populate free counter queue
