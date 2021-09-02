@@ -26,13 +26,13 @@ namespace td
 [[nodiscard]] inline bool is_scheduler_alive() { return Scheduler::IsInsideScheduler(); }
 
 /// returns the amount of threads the current scheduler has, only call if is_scheduler_alive() == true
-[[nodiscard]] inline unsigned get_current_num_threads() { return Scheduler::Current().getNumThreads(); }
+[[nodiscard]] inline uint32_t get_current_num_threads() { return Scheduler::Current().getNumThreads(); }
 
-/// returns the index of the current thread, or unsigned(-1) on unowned threads
-[[nodiscard]] inline unsigned current_thread_id() { return Scheduler::CurrentThreadIndex(); }
+/// returns the index of the current thread, or uint32_t(-1) on unowned threads
+[[nodiscard]] inline uint32_t current_thread_id() { return Scheduler::CurrentThreadIndex(); }
 
-/// returns the index of the current fiber, or unsigned(-1) on unowned threads
-[[nodiscard]] inline unsigned current_fiber_id() { return Scheduler::CurrentFiberIndex(); }
+/// returns the index of the current fiber, or uint32_t(-1) on unowned threads
+[[nodiscard]] inline uint32_t current_fiber_id() { return Scheduler::CurrentFiberIndex(); }
 
 // ==========
 // Launch
@@ -79,7 +79,7 @@ void launch_singlethreaded(F&& func)
 // Submit Tasks
 
 /// submit multiple pre-constructed tasks
-inline void submit_raw(sync& sync, container::task* tasks, unsigned num)
+inline void submit_raw(sync& sync, container::task* tasks, uint32_t num)
 {
     CC_ASSERT(td::is_scheduler_alive() && "attempted submit outside of live scheduler");
 
@@ -92,7 +92,7 @@ inline void submit_raw(sync& sync, container::task* tasks, unsigned num)
 }
 
 /// submit multiple pre-constructed tasks
-inline void submit_raw(sync& sync, cc::span<container::task> tasks) { submit_raw(sync, tasks.data(), unsigned(tasks.size())); }
+inline void submit_raw(sync& sync, cc::span<container::task> tasks) { submit_raw(sync, tasks.data(), uint32_t(tasks.size())); }
 
 
 /// construct and submit a task
@@ -118,12 +118,12 @@ void submit(sync& sync, F&& func)
 [[nodiscard]] inline sync submit_raw(cc::span<container::task> tasks)
 {
     td::sync res;
-    submit_raw(res, tasks.data(), unsigned(tasks.size()));
+    submit_raw(res, tasks.data(), uint32_t(tasks.size()));
     return res;
 }
 
 /// submit multiple pre-constructed tasks and receive an associated new sync object
-[[nodiscard]] inline sync submit_raw(container::task* tasks, unsigned num)
+[[nodiscard]] inline sync submit_raw(container::task* tasks, uint32_t num)
 {
     td::sync res;
     submit_raw(res, tasks, num);
@@ -132,7 +132,7 @@ void submit(sync& sync, F&& func)
 
 namespace detail
 {
-inline int single_wait_for(sync& sync, bool pinned)
+inline int32_t single_wait_for(sync& sync, bool pinned)
 {
     if (!sync.handle.is_valid())
     {
@@ -141,7 +141,7 @@ inline int single_wait_for(sync& sync, bool pinned)
     }
 
     // perform real wait
-    int const res = Scheduler::Current().wait(sync.handle, pinned, 0);
+    int32_t const res = Scheduler::Current().wait(sync.handle, pinned, 0);
 
     // free the sync if it reached 0
     if (Scheduler::Current().releaseCounterIfOnTarget(sync.handle, 0))
@@ -158,11 +158,11 @@ inline int single_wait_for(sync& sync, bool pinned)
 // Wait on sync objects
 
 /// waits on a sync object, returns it's value before the call
-inline int wait_for(sync& sync) { return detail::single_wait_for(sync, true); }
+inline int32_t wait_for(sync& sync) { return detail::single_wait_for(sync, true); }
 
 /// waits on a sync object, returns it's value before the call
 /// unpinned: can resume execution on a different thread than the calling one
-inline int wait_for_unpinned(sync& sync) { return detail::single_wait_for(sync, false); }
+inline int32_t wait_for_unpinned(sync& sync) { return detail::single_wait_for(sync, false); }
 
 template <class... STs>
 [[deprecated("multi-wait overloads will be removed in a future version")]] void wait_for(STs&... syncs)
@@ -190,10 +190,10 @@ namespace experimental
 }
 
 /// manually release a counter handle, returns last counter
-inline int release_counter(handle::counter handle) { return Scheduler::Current().releaseCounter(handle); }
+inline int32_t release_counter(handle::counter handle) { return Scheduler::Current().releaseCounter(handle); }
 
 /// manually release a counter handle if it reached a set target
-[[nodiscard]] inline bool release_counter_if_on_target(handle::counter handle, int target)
+[[nodiscard]] inline bool release_counter_if_on_target(handle::counter handle, int32_t target)
 {
     return Scheduler::Current().releaseCounterIfOnTarget(handle, target);
 }
@@ -202,19 +202,19 @@ inline int release_counter(handle::counter handle) { return Scheduler::Current()
 /// normally, a sync is incremented by 1 for every task submitted on it
 /// WARNING: without subsequent calls to decrement_sync, this will deadlock wait-calls on the sync
 /// returns the new counter value
-inline int increment_counter(handle::counter handle, unsigned amount = 1) { return Scheduler::Current().incrementCounter(handle, amount); }
+inline int32_t increment_counter(handle::counter handle, uint32_t amount = 1) { return Scheduler::Current().incrementCounter(handle, amount); }
 
 
 /// experimental: manually decrement a sync object, potentially causing waits on it to resolve
 /// normally, a sync is decremented once a task submitted on it is finished
 /// WARNING: without previous calls to increment_sync, this will cause wait-calls to resolve before all tasks have finished
 /// returns the new counter value
-inline void decrement_counter(handle::counter handle, unsigned amount = 1) { Scheduler::Current().decrementCounter(handle, amount); }
+inline void decrement_counter(handle::counter handle, uint32_t amount = 1) { Scheduler::Current().decrementCounter(handle, amount); }
 
 /// waits on a counter, returns it's value before the wait
-inline int wait_for_counter(handle::counter handle, bool pinned, int target = 0) { return Scheduler::Current().wait(handle, pinned, target); }
+inline int32_t wait_for_counter(handle::counter handle, bool pinned, int32_t target = 0) { return Scheduler::Current().wait(handle, pinned, target); }
 
-inline void submit_on_counter(handle::counter handle, container::task* tasks, unsigned num)
+inline void submit_on_counter(handle::counter handle, container::task* tasks, uint32_t num)
 {
     CC_ASSERT(is_scheduler_alive() && "scheduler not alive");
     td::Scheduler::Current().submitTasks(tasks, num, handle);
