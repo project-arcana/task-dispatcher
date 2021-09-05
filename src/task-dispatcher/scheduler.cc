@@ -10,13 +10,12 @@
 #include <clean-core/macros.hh>
 #include <clean-core/utility.hh>
 #include <clean-core/vector.hh>
-
+#include <clean-core/spin_lock.hh>
 
 #ifdef TD_HAS_RICH_LOG
 #include <rich-log/logger.hh>
 #endif
 
-#include "common/spin_lock.hh"
 #include "container/mpsc_queue.hh"
 #include "container/spmc_queue.hh"
 #include "native/fiber.hh"
@@ -102,7 +101,7 @@ struct Scheduler::worker_thread_t
     // same restrictions as for _resumable_fibers apply (worker_fiber_t::is_waiting_cleaned_up)
     resumable_fiber_mpsc_queue pinned_resumable_fibers = {};
     // note that this queue uses a spinlock instead of being lock free (TODO)
-    SpinLock pinned_resumable_fibers_lock = {};
+    cc::spin_lock pinned_resumable_fibers_lock = {};
 };
 
 struct Scheduler::worker_fiber_t
@@ -480,7 +479,7 @@ bool td::Scheduler::getNextTask(td::container::task& task)
         fiber_index_t resumable_fiber_index;
         bool got_resumable;
         {
-            LockGuard lg(local_thread.pinned_resumable_fibers_lock);
+            auto lg = cc::lock_guard(local_thread.pinned_resumable_fibers_lock);
             got_resumable = local_thread.pinned_resumable_fibers.dequeue(resumable_fiber_index);
         }
 
@@ -494,7 +493,7 @@ bool td::Scheduler::getNextTask(td::container::task& task)
             {
                 // Received fiber is not cleaned up yet, re-enqueue (very rare)
                 {
-                    LockGuard lg(local_thread.pinned_resumable_fibers_lock);
+                    auto lg = cc::lock_guard(local_thread.pinned_resumable_fibers_lock);
                     local_thread.pinned_resumable_fibers.enqueue(resumable_fiber_index);
                 }
 
@@ -645,7 +644,7 @@ void td::Scheduler::counterCheckWaitingFibers(td::Scheduler::atomic_counter_t& c
                 auto& pinned_thread = mThreads[slot.pinned_thread_index];
 
 
-                LockGuard lg(pinned_thread.pinned_resumable_fibers_lock);
+                auto lg = cc::lock_guard(pinned_thread.pinned_resumable_fibers_lock);
                 pinned_thread.pinned_resumable_fibers.enqueue(slot.fiber_index);
             }
 
