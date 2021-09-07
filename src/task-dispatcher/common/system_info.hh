@@ -7,10 +7,16 @@
 
 namespace td::system
 {
-// == Compile time architecture info ==
-inline size_t constexpr l1_cacheline_size = 64; // std::hardware_destructive_interference_size assumption, verified in .cc
+enum
+{
+    l1_cacheline_size = 64
+};
 
-// == Run time system info ==
-[[nodiscard]] TD_API uint32_t num_logical_cores() noexcept;  // std::thread::hardware_concurrency
-[[nodiscard]] TD_API uint32_t num_physical_cores() noexcept; // platform-specific, expensive on Windows
+// Returns amount of logical CPU cores (calls std::thread::hardware_concurrency)
+TD_API uint32_t num_logical_cores() noexcept;
+
+// Returns amount of physical CPU cores (platform-specific, expensive on Windows)
+// WARNING: This is inaccurate on Linux for non-Intel and doesn't account for hyperthreading being disabled (but available)
+[[deprecated("Inaccurate, do not use")]] 
+TD_API uint32_t num_physical_cores() noexcept;
 }
