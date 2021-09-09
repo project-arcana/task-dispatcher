@@ -176,12 +176,12 @@ template <class... STs>
     (detail::single_wait_for(syncs, false), ...);
 }
 
-
 // ==========
-// Experimental API - operation on counter handles without automatic sync management
+// Directly manage counters
+// this is a lower-level way of using task dispatcher
+// counters are the internals of td::sync and must be created and destroyed
+// they can also be incremented and decremented directly
 
-namespace experimental
-{
 /// manually create a counter handle
 [[nodiscard]] inline handle::counter acquire_counter()
 {
@@ -198,20 +198,21 @@ inline int32_t release_counter(handle::counter handle) { return Scheduler::Curre
     return Scheduler::Current().releaseCounterIfOnTarget(handle, target);
 }
 
-/// experimental: manually increment a sync object, preventing waits on it to resolve
+/// manually increment a sync object, preventing waits on it to resolve
 /// normally, a sync is incremented by 1 for every task submitted on it
 /// WARNING: without subsequent calls to decrement_sync, this will deadlock wait-calls on the sync
 /// returns the new counter value
 inline int32_t increment_counter(handle::counter handle, uint32_t amount = 1) { return Scheduler::Current().incrementCounter(handle, amount); }
 
-
-/// experimental: manually decrement a sync object, potentially causing waits on it to resolve
+/// manually decrement a sync object, potentially causing waits on it to resolve
 /// normally, a sync is decremented once a task submitted on it is finished
 /// WARNING: without previous calls to increment_sync, this will cause wait-calls to resolve before all tasks have finished
 /// returns the new counter value
 inline void decrement_counter(handle::counter handle, uint32_t amount = 1) { Scheduler::Current().decrementCounter(handle, amount); }
 
-/// waits on a counter, returns it's value before the wait
+/// waits until the counter reaches the target value
+/// pinnned: if true, the task entering the wait can only resume on the OS thread this was called from
+/// returns the value before the wait
 inline int32_t wait_for_counter(handle::counter handle, bool pinned, int32_t target = 0) { return Scheduler::Current().wait(handle, pinned, target); }
 
 inline void submit_on_counter(handle::counter handle, container::task* tasks, uint32_t num)
@@ -233,7 +234,6 @@ void submit_lambda_on_counter(handle::counter handle, F&& func)
         dispatch.lambda([=] { func(); });
 
     submit_on_counter(handle, &dispatch, 1);
-}
 }
 
 }

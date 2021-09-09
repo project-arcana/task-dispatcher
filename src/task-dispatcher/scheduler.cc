@@ -8,9 +8,9 @@
 #include <clean-core/array.hh>
 #include <clean-core/assert.hh>
 #include <clean-core/macros.hh>
+#include <clean-core/spin_lock.hh>
 #include <clean-core/utility.hh>
 #include <clean-core/vector.hh>
-#include <clean-core/spin_lock.hh>
 
 #ifdef TD_HAS_RICH_LOG
 #include <rich-log/logger.hh>
@@ -622,10 +622,12 @@ void td::Scheduler::counterCheckWaitingFibers(td::Scheduler::atomic_counter_t& c
             bool expected = false;
             if (!std::atomic_compare_exchange_strong_explicit(&slot.in_use, &expected, true, //
                                                               std::memory_order_seq_cst, std::memory_order_relaxed))
+            {
                 // Failed to lock, this slot is already being handled on a different thread (which stole it right between the two checks)
                 continue;
+            }
 
-            //            KW_LOG_DIAG("[cnst_check_waiting_fibers] Counter reached " << value << ", making waiting fiber " << slot.fiber_index << " resumable");
+            // KW_LOG_DIAG("[cnst_check_waiting_fibers] Counter reached " << value << ", making waiting fiber " << slot.fiber_index << " resumable");
 
 
             // The waiting fiber is ready, and locked by this thread

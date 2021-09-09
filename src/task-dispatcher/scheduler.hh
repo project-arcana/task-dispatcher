@@ -3,9 +3,9 @@
 #include <atomic>
 #include <cstdint>
 
+#include <clean-core/alloc_array.hh>
 #include <clean-core/atomic_linked_pool.hh>
 #include <clean-core/function_ptr.hh>
-#include <clean-core/alloc_array.hh>
 
 #include <task-dispatcher/common/api.hh>
 #include <task-dispatcher/common/system_info.hh>
