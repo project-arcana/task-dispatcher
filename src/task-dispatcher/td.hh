@@ -97,9 +97,8 @@ void submit(sync& s, F func, FObj& inst, Args&&... args)
     static_assert(std::is_invocable_v<F, FObj, Args...>, "function must be invocable with the given args");
     static_assert(std::is_same_v<std::invoke_result_t<F, FObj, Args...>, void>, "return must be void");
     // A lambda calling fun(args...), but moving the args instead of copying them into the lambda
-    container::task dispatch([func, inst_ptr = &inst, tup = cc::tuple(cc::move(args)...)] {
-        cc::apply([&func, &inst_ptr](auto&&... args) { (inst_ptr->*func)(decltype(args)(args)...); }, tup);
-    });
+    container::task dispatch([func, inst_ptr = &inst, tup = cc::tuple(cc::move(args)...)]
+                             { cc::apply([&func, &inst_ptr](auto&&... args) { (inst_ptr->*func)(decltype(args)(args)...); }, tup); });
 
     submit_raw(s, &dispatch, 1);
 }
@@ -148,10 +147,9 @@ void submit_each_copy(sync& sync, F&& func, cc::span<T> vals, cc::allocator* scr
 /// submits tasks calling a lambda "void f(unsigned start, unsigned end)" for multiple batches over the range 0 to n
 /// num_batches_max: maximum amount of batches to partition the range into
 template <class F>
-unsigned submit_batched(sync& sync, F&& func, unsigned n, unsigned num_batches_max = td::system::num_logical_cores() * 4, cc::allocator* scratch_alloc = cc::system_allocator)
+uint32_t submit_batched(sync& sync, F&& func, uint32_t n, uint32_t num_batches_max = td::system::num_logical_cores() * 4, cc::allocator* scratch_alloc = cc::system_allocator)
 {
-    static_assert(std::is_invocable_v<F, unsigned, unsigned>, "function must be invocable with batch start and end argument");
-    static_assert(std::is_same_v<std::invoke_result_t<F, unsigned, unsigned>, void>, "return must be void");
+    static_assert(std::is_invocable_v<F, uint32_t, uint32_t>, "function must be invocable with batch start and end argument");
 
     auto batch_size = cc::int_div_ceil(n, num_batches_max);
     auto num_batches = cc::int_div_ceil(n, batch_size);
@@ -174,27 +172,15 @@ unsigned submit_batched(sync& sync, F&& func, unsigned n, unsigned num_batches_m
 /// submits tasks calling a lambda "void f(unsigned start, unsigned end, unsigned batch_i)" for multiple batches over the range 0 to n
 /// num_batches_max: maximum amount of batches to partition the range into
 template <class F>
-unsigned submit_batched_n(sync& sync, F&& func, unsigned n, unsigned num_batches_max = td::system::num_logical_cores() * 4, cc::allocator* scratch_alloc = cc::system_allocator)
+uint32_t submit_batched_n(sync& sync, F&& func, uint32_t num_elements, uint32_t max_num_batches = td::system::num_logical_cores() * 4, cc::allocator* scratch_alloc = cc::system_allocator)
 {
-    static_assert(std::is_invocable_v<F, unsigned, unsigned, unsigned>, "function must be invocable with batch start, end, and index argument");
-    static_assert(std::is_same_v<std::invoke_result_t<F, unsigned, unsigned, unsigned>, void>, "return must be void");
-
-    auto batch_size = cc::int_div_ceil(n, num_batches_max);
-    auto num_batches = cc::int_div_ceil(n, batch_size);
-
-    CC_RUNTIME_ASSERT(num_batches <= num_batches_max && "programmer error");
-
-    auto tasks = cc::alloc_array<td::container::task>::uninitialized(num_batches, scratch_alloc);
-
-    for (unsigned batch = 0u, start = 0u, end = cc::min(batch_size, n); //
-         batch < num_batches;                                           //
-         ++batch, start = batch * batch_size, end = cc::min((batch + 1) * batch_size, n))
+    CC_ASSERT(is_scheduler_alive() && "scheduler not alive");
+    if (!sync.handle.is_valid())
     {
-        tasks[batch].lambda([=] { func(start, end, batch); });
+        sync.handle = td::Scheduler::Current().acquireCounterHandle();
     }
 
-    submit_raw(sync, tasks.data(), num_batches);
-    return num_batches;
+    return submit_batched_on_counter<F>(sync.handle, cc::forward<F>(func), n, max_num_batches, scratch_alloc);
 }
 
 // ==========
@@ -236,9 +222,8 @@ template <class F, class FObj, class... Args, cc::enable_if<std::is_member_funct
         sync res;
 
         // A lambda calling fun(args...), but moving the args instead of copying them into the lambda
-        container::task dispatch([func, inst_ptr = &inst, tup = cc::tuple(cc::move(args)...)] {
-            cc::apply([&func, &inst_ptr](auto&&... args) { (inst_ptr->*func)(decltype(args)(args)...); }, tup);
-        });
+        container::task dispatch([func, inst_ptr = &inst, tup = cc::tuple(cc::move(args)...)]
+                                 { cc::apply([&func, &inst_ptr](auto&&... args) { (inst_ptr->*func)(decltype(args)(args)...); }, tup); });
 
         submit_raw(res, &dispatch, 1);
         return res;
@@ -250,9 +235,9 @@ template <class F, class FObj, class... Args, cc::enable_if<std::is_member_funct
         R* const result_ptr = res.get_raw_pointer();
 
         // A lambda calling fun(args...), but moving the args instead of copying them into the lambda
-        container::task dispatch([func, inst_ptr = &inst, result_ptr, tup = cc::tuple(cc::move(args)...)] {
-            cc::apply([&func, &inst_ptr, &result_ptr](auto&&... args) { *result_ptr = (inst_ptr->*func)(decltype(args)(args)...); }, tup);
-        });
+        container::task dispatch(
+            [func, inst_ptr = &inst, result_ptr, tup = cc::tuple(cc::move(args)...)]
+            { cc::apply([&func, &inst_ptr, &result_ptr](auto&&... args) { *result_ptr = (inst_ptr->*func)(decltype(args)(args)...); }, tup); });
 
         submit_raw(s, &dispatch, 1);
         res.set_sync(s);
@@ -272,8 +257,8 @@ template <class F, class... Args, cc::enable_if<std::is_invocable_v<F, Args...> 
         sync res;
 
         // A lambda callung fun(args...), but moving the args instead of copying them into the lambda
-        container::task dispatch(
-            [fun, tup = cc::tuple(cc::move(args)...)] { cc::apply([&fun](auto&&... args) { fun(decltype(args)(args)...); }, tup); });
+        container::task dispatch([fun, tup = cc::tuple(cc::move(args)...)]
+                                 { cc::apply([&fun](auto&&... args) { fun(decltype(args)(args)...); }, tup); });
 
         submit_raw(res, &dispatch, 1);
         return res;
@@ -285,9 +270,8 @@ template <class F, class... Args, cc::enable_if<std::is_invocable_v<F, Args...> 
         R* const result_ptr = res.get_raw_pointer();
 
         // A lambda callung fun(args...), but moving the args instead of copying them into the lambda
-        container::task dispatch([fun, result_ptr, tup = cc::tuple(cc::move(args)...)] {
-            cc::apply([&fun, &result_ptr](auto&&... args) { *result_ptr = fun(decltype(args)(args)...); }, tup);
-        });
+        container::task dispatch([fun, result_ptr, tup = cc::tuple(cc::move(args)...)]
+                                 { cc::apply([&fun, &result_ptr](auto&&... args) { *result_ptr = fun(decltype(args)(args)...); }, tup); });
 
         submit_raw(s, &dispatch, 1);
         res.set_sync(s);

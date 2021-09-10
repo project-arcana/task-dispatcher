@@ -6,6 +6,7 @@
 #include <clean-core/enable_if.hh>
 #include <clean-core/forward.hh>
 #include <clean-core/span.hh>
+#include <clean-core/utility.hh>
 
 #include <task-dispatcher/container/task.hh>
 #include <task-dispatcher/scheduler.hh>
@@ -222,10 +223,9 @@ inline void submit_on_counter(handle::counter handle, container::task* tasks, ui
 }
 
 template <class F, cc::enable_if<std::is_invocable_r_v<void, F>> = true>
-void submit_lambda_on_counter(handle::counter handle, F&& func)
+void submit_on_counter(handle::counter handle, F&& func)
 {
     static_assert(std::is_invocable_v<F>, "function must be invocable without arguments");
-    static_assert(std::is_invocable_r_v<void, F>, "return must be void");
 
     container::task dispatch;
     if constexpr (std::is_class_v<F>)
@@ -234,6 +234,28 @@ void submit_lambda_on_counter(handle::counter handle, F&& func)
         dispatch.lambda([=] { func(); });
 
     submit_on_counter(handle, &dispatch, 1);
+}
+
+template <class F>
+uint32_t submit_batched_on_counter(handle::counter handle, F&& func, uint32_t num_elements, uint32_t max_num_batches, cc::allocator* scratch = cc::system_allocator)
+{
+    static_assert(std::is_invocable_v<F, uint32_t, uint32_t, uint32_t>, "function must be invocable with element start, end, and index argument");
+
+    auto const batch_size = cc::int_div_ceil(num_elements, max_num_batches);
+    auto const num_batches = cc::int_div_ceil(num_elements, batch_size);
+    CC_ASSERT(num_batches <= max_num_batches && "programmer error");
+
+    auto tasks = cc::alloc_array<td::container::task>::uninitialized(num_batches, scratch);
+
+    for (uint32_t batch = 0u, start = 0u, end = cc::min(batch_size, num_elements); //
+         batch < num_batches;                                                      //
+         ++batch, start = batch * batch_size, end = cc::min((batch + 1) * batch_size, num_elements))
+    {
+        tasks[batch].lambda([=] { func(start, end, batch); });
+    }
+
+    submit_on_counter(handle, tasks.data(), num_batches);
+    return num_batches;
 }
 
 }
