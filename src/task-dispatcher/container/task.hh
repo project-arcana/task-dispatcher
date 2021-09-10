@@ -16,6 +16,9 @@
 
 #include <task-dispatcher/common/system_info.hh>
 
+// the size of a task in cachelines (= 64B)
+#define TD_FIXED_TASK_SIZE 2
+
 namespace td::container
 {
 // POD-struct storing tasks, from either a captureful lambda (of limited size), or a func ptr + void* userdata
@@ -31,7 +34,7 @@ public:
     using function_ptr_t = void (*)(void*);
     using execute_and_cleanup_function_t = void(std::byte*);
 
-    static auto constexpr task_size = td::system::l1_cacheline_size;
+    static auto constexpr task_size = td::system::l1_cacheline_size * TD_FIXED_TASK_SIZE;
     static constexpr auto usable_buffer_size = task_size - sizeof(default_metadata_t) - sizeof(execute_and_cleanup_function_t*);
     using buffer_t = std::byte[usable_buffer_size];
 
@@ -67,7 +70,8 @@ public:
         {
             new (cc::placement_new, _buffer) T(cc::move(l));
 
-            _exec_cleanup_func = [](std::byte* buf) {
+            _exec_cleanup_func = [](std::byte* buf)
+            {
                 T& ref = *reinterpret_cast<T*>(buf);
                 ref.operator()();
                 ref.~T();
@@ -79,13 +83,15 @@ public:
             auto heap_lambda = cc::make_unique<T>(cc::move(l));
             new (cc::placement_new, _buffer) cc::unique_ptr<T>(cc::move(heap_lambda));
 
-            _exec_cleanup_func = [](std::byte* buf) {
+            _exec_cleanup_func = [](std::byte* buf)
+            {
                 cc::unique_ptr<T>& ref = *reinterpret_cast<cc::unique_ptr<T>*>(buf);
                 ref->operator()();
                 ref.~unique_ptr<T>();
             };
 #else
-            static_assert(sizeof(T) == 0, "Lambda too large, enable TD_ALLOW_HEAP_TASKS or reduce capture size");
+            static_assert(sizeof(T) == 0, "Lambda capture is too large, enable TD_ALLOW_HEAP_TASKS, reduce capture size or increase "
+                                          "TD_FIXED_TASK_SIZE");
 #endif
         }
     }
@@ -98,7 +104,8 @@ public:
         new (cc::placement_new, _buffer) fptr_t(func_ptr);
         new (cc::placement_new, _buffer + sizeof(fptr_t)) void*(userdata);
 
-        _exec_cleanup_func = [](std::byte* buf) {
+        _exec_cleanup_func = [](std::byte* buf)
+        {
             fptr_t& ref = *reinterpret_cast<fptr_t*>(buf);
             void*& ref_arg = *reinterpret_cast<void**>(buf + sizeof(fptr_t));
             ref(ref_arg);
@@ -116,7 +123,7 @@ public:
     void execute_and_cleanup() { _exec_cleanup_func(_buffer); }
 };
 
-static_assert(sizeof(td::container::task) == td::system::l1_cacheline_size, "task exceeds cacheline size");
-static_assert(alignof(td::container::task) == alignof(std::max_align_t), "task risks misalignment");
+static_assert(sizeof(td::container::task) == td::system::l1_cacheline_size * TD_FIXED_TASK_SIZE, "task type is unexpectedly large");
+static_assert(alignof(td::container::task) == alignof(std::max_align_t), "task type risks misalignment");
 static_assert(std::is_trivial_v<td::container::task>, "task is not trivial");
 }

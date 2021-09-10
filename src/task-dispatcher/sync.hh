@@ -7,11 +7,11 @@ namespace td
 namespace handle
 {
 using handle_t = uint32_t;
-inline constexpr handle_t null_handle_value = handle_t(-1);
+inline constexpr handle_t null_handle_value = 0;
 
 struct counter
 {
-    handle_t _value;
+    handle_t _value = null_handle_value;
     counter() = default;
     explicit constexpr counter(handle_t val) : _value(val) {}
     void invalidate() & { _value = null_handle_value; }
