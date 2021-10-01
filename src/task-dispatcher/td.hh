@@ -180,7 +180,7 @@ uint32_t submit_batched_n(sync& sync, F&& func, uint32_t num_elements, uint32_t 
         sync.handle = td::Scheduler::Current().acquireCounterHandle();
     }
 
-    return submit_batched_on_counter<F>(sync.handle, cc::forward<F>(func), n, max_num_batches, scratch_alloc);
+    return submit_batched_on_counter<F>(sync.handle, cc::forward<F>(func), num_elements, max_num_batches, scratch_alloc);
 }
 
 // ==========
