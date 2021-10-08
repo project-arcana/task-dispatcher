@@ -13,7 +13,7 @@
 #include <clean-core/vector.hh>
 
 #ifdef TD_HAS_RICH_LOG
-#include <rich-log/logger.hh>
+#include <rich-log/StdOutLogger.hh>
 #endif
 
 #include "container/mpsc_queue.hh"
@@ -220,7 +220,7 @@ struct Scheduler::callback_funcs
         // worker thread startup tasks
 #ifdef TD_HAS_RICH_LOG
         // set the rich-log thread name (shown as a prefix)
-        rlog::set_current_thread_name("td#%02u", worker_arg->index);
+        rlog::setCurrentThreadName("td#%02u", worker_arg->index);
 #endif
         // set the thead name for debuggers
         native::set_current_thread_debug_name(int(worker_arg->index));
@@ -788,10 +788,6 @@ void td::Scheduler::start(td::container::task main_task)
     {
         applied_win32_sched_change = native::win32_enable_scheduler_granular();
     }
-#ifdef TD_HAS_RICH_LOG
-    // always enable win32 colors for rich-log
-    rlog::enable_win32_colors();
-#endif
 #endif
 
 
@@ -815,7 +811,7 @@ void td::Scheduler::start(td::container::task main_task)
         native::create_main_fiber(s_tls.thread_fiber);
 
 #ifdef TD_HAS_RICH_LOG
-        rlog::set_current_thread_name("td#00");
+        rlog::setCurrentThreadName("td#00");
 #endif
     }
 
