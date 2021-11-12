@@ -1,30 +1,27 @@
 #pragma once
 
-#include <cstdint>
+#include <stdint.h>
 
 namespace td
 {
-namespace handle
+// Handle to a counter, the core synchronization mechanism
+struct CounterHandle
 {
-using handle_t = uint32_t;
-inline constexpr handle_t null_handle_value = 0;
+    uint32_t _value = 0;
 
-struct counter
-{
-    handle_t _value = null_handle_value;
-    counter() = default;
-    explicit constexpr counter(handle_t val) : _value(val) {}
-    void invalidate() & { _value = null_handle_value; }
-    [[nodiscard]] constexpr bool is_valid() const noexcept { return _value != null_handle_value; }
-    [[nodiscard]] constexpr bool operator==(counter rhs) const noexcept { return _value == rhs._value; }
-    [[nodiscard]] constexpr bool operator!=(counter rhs) const noexcept { return _value != rhs._value; }
+    CounterHandle() = default;
+    explicit constexpr CounterHandle(uint32_t val) : _value(val) {}
+
+    void invalidate() & { _value = 0; }
+    bool isValid() const { return _value != 0; }
+
+    bool operator==(CounterHandle rhs) const { return _value == rhs._value; }
+    bool operator!=(CounterHandle rhs) const { return _value != rhs._value; }
 };
 
-inline constexpr counter null_counter = handle::counter{null_handle_value};
-}
-
-struct sync
+// An automatically managed CounterHandle
+struct Sync
 {
-    handle::counter handle = handle::null_counter;
+    CounterHandle handle = {};
 };
 }

@@ -8,8 +8,9 @@
 #include <clean-core/span.hh>
 #include <clean-core/utility.hh>
 
-#include <task-dispatcher/container/task.hh>
-#include <task-dispatcher/scheduler.hh>
+#include <task-dispatcher/Scheduler.hh>
+#include <task-dispatcher/SchedulerConfig.hh>
+#include <task-dispatcher/container/Task.hh>
 #include <task-dispatcher/sync.hh>
 
 // td-lean.hh
@@ -33,7 +34,7 @@ namespace td
 
 // launches a scheduler with the given config, and calls the lambda as its main task
 template <class F>
-void launch(scheduler_config config, F&& func)
+void launch(SchedulerConfig const& config, F&& func)
 {
     static_assert(std::is_invocable_v<F>, "function must be invocable without arguments");
     static_assert(std::is_same_v<std::invoke_result_t<F>, void>, "return must be void");
@@ -44,8 +45,8 @@ void launch(scheduler_config config, F&& func)
         return;
     }
 
-    container::task mainTask;
-    mainTask.lambda(cc::forward<F>(func));
+    Task mainTask;
+    mainTask.initWithLambda(cc::forward<F>(func));
     td::launchScheduler(config, mainTask);
 }
 
@@ -53,14 +54,14 @@ void launch(scheduler_config config, F&& func)
 template <class F>
 void launch(F&& func)
 {
-    return launch(scheduler_config{}, cc::forward<F>(func));
+    return launch(SchedulerConfig{}, cc::forward<F>(func));
 }
 
 // launches a scheduler restricted to a single thread, and calls the lambda as its main task
 template <class F>
 void launch_singlethreaded(F&& func)
 {
-    scheduler_config config;
+    SchedulerConfig config;
     config.num_threads = 1;
     return launch(config, cc::forward<F>(func));
 }
@@ -70,11 +71,11 @@ void launch_singlethreaded(F&& func)
 // Submit Tasks
 
 // submit multiple pre-constructed tasks
-inline void submit_raw(sync& sync, cc::span<td::container::task> tasks)
+inline void submit_raw(Sync& sync, cc::span<td::Task> tasks)
 {
     CC_ASSERT(isInsideScheduler() && "attempted submit outside of live scheduler");
 
-    if (!sync.handle.is_valid())
+    if (!sync.handle.isValid())
     {
         sync.handle = acquireCounter();
     }
@@ -85,16 +86,16 @@ inline void submit_raw(sync& sync, cc::span<td::container::task> tasks)
 // construct and submit a task
 // based on a single "void f()" lambda or function pointer
 template <class F, cc::enable_if<std::is_invocable_r_v<void, F>> = true>
-void submit(sync& sync, F&& func)
+void submit(Sync& sync, F&& func)
 {
     static_assert(std::is_invocable_v<F>, "function must be invocable without arguments");
     static_assert(std::is_invocable_r_v<void, F>, "return must be void");
 
-    container::task dispatch;
+    Task dispatch;
     if constexpr (std::is_class_v<F>)
-        dispatch.lambda(cc::forward<F>(func));
+        dispatch.initWithLambda(cc::forward<F>(func));
     else
-        dispatch.lambda([=] { func(); });
+        dispatch.initWithLambda([=] { func(); });
     submit_raw(sync, cc::span{dispatch});
 }
 
@@ -102,18 +103,18 @@ void submit(sync& sync, F&& func)
 // Submit Tasks - sync return variants
 
 // submit multiple pre-constructed tasks and receive an associated new sync object
-[[nodiscard]] inline sync submit_raw(cc::span<container::task> tasks)
+[[nodiscard]] inline Sync submit_raw(cc::span<Task> tasks)
 {
-    td::sync res;
+    td::Sync res;
     submit_raw(res, tasks);
     return res;
 }
 
 namespace detail
 {
-inline int32_t single_wait_for(sync& sync, bool pinned)
+inline int32_t single_wait_for(Sync& sync, bool pinned)
 {
-    if (!sync.handle.is_valid())
+    if (!sync.handle.isValid())
     {
         // return immediately for uninitialized syncs
         return 0;
@@ -126,7 +127,7 @@ inline int32_t single_wait_for(sync& sync, bool pinned)
     if (td::releaseCounterIfOnZero(sync.handle))
     {
         // mark as uninitialized
-        sync.handle = handle::null_counter;
+        sync.handle.invalidate();
     }
 
     return res;
@@ -137,11 +138,11 @@ inline int32_t single_wait_for(sync& sync, bool pinned)
 // Wait on sync objects
 
 /// waits on a sync object, returns it's value before the call
-inline int32_t wait_for(sync& sync) { return detail::single_wait_for(sync, true); }
+inline int32_t wait_for(Sync& sync) { return detail::single_wait_for(sync, true); }
 
 /// waits on a sync object, returns it's value before the call
 /// unpinned: can resume execution on a different thread than the calling one
-inline int32_t wait_for_unpinned(sync& sync) { return detail::single_wait_for(sync, false); }
+inline int32_t wait_for_unpinned(Sync& sync) { return detail::single_wait_for(sync, false); }
 
 template <class... STs>
 [[deprecated("multi-wait overloads will be removed in a future version")]] void wait_for(STs&... syncs)
@@ -161,20 +162,20 @@ template <class... STs>
 // counters are the internals of td::sync and must be created and destroyed
 // they can also be incremented and decremented directly
 
-[[deprecated("renamed to td::acquireCounter()")]] inline handle::counter acquire_counter() { return td::acquireCounter(); }
-[[deprecated("renamed to td::releaseCounter()")]] inline int32_t release_counter(handle::counter handle) { return td::releaseCounter(handle); }
+[[deprecated("renamed to td::acquireCounter()")]] inline CounterHandle acquire_counter() { return td::acquireCounter(); }
+[[deprecated("renamed to td::releaseCounter()")]] inline int32_t release_counter(CounterHandle handle) { return td::releaseCounter(handle); }
 
-[[deprecated("renamed to td::releaseCounterIfOnZero()")]] inline bool release_counter_if_on_target(handle::counter handle, int32_t target)
+[[deprecated("renamed to td::releaseCounterIfOnZero()")]] inline bool release_counter_if_on_target(CounterHandle handle, int32_t target)
 {
     CC_ASSERT(target == 0 && "Non-zero counter counter targets are no longer supported");
     return td::releaseCounterIfOnZero(handle);
 }
 
-[[deprecated("renamed to td::incrementCounter")]] inline int32_t increment_counter(handle::counter handle, uint32_t amount = 1)
+[[deprecated("renamed to td::incrementCounter")]] inline int32_t increment_counter(CounterHandle handle, uint32_t amount = 1)
 {
     return td::incrementCounter(handle, amount);
 }
-[[deprecated("renamed to td::incrementCounter")]] inline void decrement_counter(handle::counter handle, uint32_t amount = 1)
+[[deprecated("renamed to td::incrementCounter")]] inline void decrement_counter(CounterHandle handle, uint32_t amount = 1)
 {
     td::decrementCounter(handle, amount);
 }
@@ -182,34 +183,34 @@ template <class... STs>
 /// waits until the counter reaches the target value
 /// pinnned: if true, the task entering the wait can only resume on the OS thread this was called from
 /// returns the value before the wait
-[[deprecated("renamed to td::waitForCounter()")]] inline int32_t wait_for_counter(handle::counter handle, bool pinned, int32_t target = 0)
+[[deprecated("renamed to td::waitForCounter()")]] inline int32_t wait_for_counter(CounterHandle handle, bool pinned, int32_t target = 0)
 {
     CC_ASSERT(target == 0 && "Non-zero counter targets are no longer supported");
     return td::waitForCounter(handle, pinned);
 }
 
-[[deprecated("use td::submitTasks()")]] inline void submit_on_counter(handle::counter handle, container::task* tasks, uint32_t num)
+[[deprecated("use td::submitTasks()")]] inline void submit_on_counter(CounterHandle handle, Task* tasks, uint32_t num)
 {
     td::submitTasks(handle, cc::span(tasks, num));
 }
 
 template <class F, cc::enable_if<std::is_invocable_r_v<void, F>> = true>
-void submit_on_counter(handle::counter handle, F&& func)
+void submit_on_counter(CounterHandle handle, F&& func)
 {
     static_assert(std::is_invocable_v<F>, "function must be invocable without arguments");
 
-    container::task dispatch;
+    Task dispatch;
 
     if constexpr (std::is_class_v<F>)
-        dispatch.lambda(cc::forward<F>(func));
+        dispatch.initWithLambda(cc::forward<F>(func));
     else
-        dispatch.lambda([=] { func(); });
+        dispatch.initWithLambda([=] { func(); });
 
     submitTasks(handle, cc::span{dispatch});
 }
 
 template <class F>
-uint32_t submit_batched_on_counter(handle::counter handle, F&& func, uint32_t num_elements, uint32_t max_num_batches, cc::allocator* scratch = cc::system_allocator)
+uint32_t submit_batched_on_counter(CounterHandle handle, F&& func, uint32_t num_elements, uint32_t max_num_batches, cc::allocator* scratch = cc::system_allocator)
 {
     static_assert(std::is_invocable_v<F, uint32_t, uint32_t, uint32_t>, "function must be invocable with element start, end, and index argument");
 
@@ -217,13 +218,13 @@ uint32_t submit_batched_on_counter(handle::counter handle, F&& func, uint32_t nu
     auto const num_batches = cc::int_div_ceil(num_elements, batch_size);
     CC_ASSERT(num_batches <= max_num_batches && "programmer error");
 
-    auto tasks = cc::alloc_array<td::container::task>::uninitialized(num_batches, scratch);
+    auto tasks = cc::alloc_array<td::Task>::uninitialized(num_batches, scratch);
 
     for (uint32_t batch = 0u, start = 0u, end = cc::min(batch_size, num_elements); //
          batch < num_batches;                                                      //
          ++batch, start = batch * batch_size, end = cc::min((batch + 1) * batch_size, num_elements))
     {
-        tasks[batch].lambda([=] { func(start, end, batch); });
+        tasks[batch].initWithLambda([=] { func(start, end, batch); });
     }
 
     submit_on_counter(handle, tasks.data(), num_batches);

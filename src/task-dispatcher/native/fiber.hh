@@ -1,5 +1,6 @@
 #pragma once
 
+#include <clean-core/allocator.hh>
 #include <clean-core/macros.hh>
 
 #ifdef CC_OS_WINDOWS
@@ -33,16 +34,6 @@ extern "C" inline int __gxx_personality_v0() { return 0; }
 
 namespace td::native
 {
-// malloc passthrough, might want to capitalize on this later
-struct allocator
-{
-    void* alloc(size_t size) const { return ::malloc(size); }
-
-    void free(void* block) const { return ::free(block); }
-};
-
-inline auto constexpr default_alloc = allocator{};
-
 #ifdef CC_OS_WINDOWS
 // Thin native fiber abstraction for Win32
 
@@ -63,13 +54,13 @@ inline void create_main_fiber(fiber_t& fib)
 
 inline void delete_main_fiber(fiber_t&) { ::ConvertFiberToThread(); }
 
-inline void create_fiber(fiber_t& fib, void (*fiber_proc)(void*), void* ctx, size_t stack_size, allocator const& = default_alloc)
+inline void create_fiber(fiber_t& fib, void (*fiber_proc)(void*), void* ctx, size_t stack_size, cc::allocator*)
 {
     fib.native = ::CreateFiber(stack_size, static_cast<LPFIBER_START_ROUTINE>(fiber_proc), ctx);
     CC_ASSERT(fib.native != nullptr && "Fiber creation failed");
 }
 
-inline void delete_fiber(fiber_t& fib, allocator const& = default_alloc) { ::DeleteFiber(fib.native); }
+inline void delete_fiber(fiber_t& fib, cc::allocator*) { ::DeleteFiber(fib.native); }
 
 inline void switch_to_fiber(fiber_t fib, fiber_t) { ::SwitchToFiber(fib.native); }
 
@@ -122,10 +113,10 @@ inline void delete_main_fiber(fiber_t&)
     // no op
 }
 
-inline void create_fiber(fiber_t& fib, void (*ufnc)(void*), void* uctx, size_t stack_size, allocator const& alloc = default_alloc)
+inline void create_fiber(fiber_t& fib, void (*ufnc)(void*), void* uctx, size_t stack_size, cc::allocator* alloc)
 {
     ::getcontext(&fib.fib);
-    fib.fib.uc_stack.ss_sp = alloc.alloc(stack_size);
+    fib.fib.uc_stack.ss_sp = reinterpret_cast<void*>(alloc->alloc(stack_size));
     fib.fib.uc_stack.ss_size = stack_size;
     fib.fib.uc_link = nullptr;
     ::ucontext_t tmp;
@@ -134,7 +125,7 @@ inline void create_fiber(fiber_t& fib, void (*ufnc)(void*), void* uctx, size_t s
     ::swapcontext(&tmp, &fib.fib);
 }
 
-inline void delete_fiber(fiber_t& fib, allocator const& alloc = default_alloc) { alloc.free(fib.fib.uc_stack.ss_sp); }
+inline void delete_fiber(fiber_t& fib, cc::allocator* alloc) { alloc->free(fib.fib.uc_stack.ss_sp); }
 
 inline void switch_to_fiber(fiber_t& fib, fiber_t& prv)
 {

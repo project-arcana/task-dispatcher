@@ -1,17 +1,20 @@
 #pragma once
 
+#include <stdint.h>
+
 namespace td
 {
-namespace container
-{
-struct task;
-}
+template <class T>
+struct MPMCQueue;
 
-namespace handle
-{
-struct counter;
-}
+template <class T, uint32_t N>
+struct FIFOQueue;
 
-struct scheduler_config;
-class Scheduler;
+template <class T, uint32_t N>
+struct VersionRing;
+
+struct CounterHandle;
+struct Sync;
+struct Task;
+struct SchedulerConfig;
 }

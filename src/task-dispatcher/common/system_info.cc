@@ -13,14 +13,14 @@
 #endif
 
 #ifdef CC_COMPILER_MSVC
-static_assert(td::system::l1_cacheline_size == std::hardware_destructive_interference_size, "L1 Cacheline size assumption wrong");
+static_assert(td::l1_cacheline_size == std::hardware_destructive_interference_size, "L1 Cacheline size assumption wrong");
 #else
 // Clang doesn't support std::hardware_destructive_interference yet
 #endif
 
-uint32_t td::system::num_logical_cores() noexcept { return std::thread::hardware_concurrency(); }
+uint32_t td::getNumLogicalCPUCores() noexcept { return std::thread::hardware_concurrency(); }
 
-uint32_t td::system::num_physical_cores() noexcept
+uint32_t td::getNumPhysicalCPUCores() noexcept
 {
 #ifdef CC_OS_WINDOWS
     std::byte buffer_stack[4096];
@@ -77,9 +77,9 @@ uint32_t td::system::num_physical_cores() noexcept
     bool const has_hyperthreading = feature_set_flags & (1 << 28);
 
     if (has_hyperthreading)
-        return num_logical_cores() / 2;
+        return getNumLogicalCPUCores() / 2;
     else
-        return num_logical_cores();
+        return getNumLogicalCPUCores();
 #else
 #error "Unsupported operating system"
 #endif
