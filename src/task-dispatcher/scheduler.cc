@@ -1,14 +1,18 @@
 #include "scheduler.hh"
 
+#include <atomic>
 #include <cstdint>
 #include <cstdio>
 
 #include <immintrin.h>
 
+#include <clean-core/alloc_array.hh>
 #include <clean-core/array.hh>
 #include <clean-core/assert.hh>
+#include <clean-core/atomic_linked_pool.hh>
 #include <clean-core/macros.hh>
 #include <clean-core/spin_lock.hh>
+#include <clean-core/threadsafe_allocators.hh>
 #include <clean-core/utility.hh>
 #include <clean-core/vector.hh>
 
@@ -16,11 +20,20 @@
 #include <rich-log/StdOutLogger.hh>
 #endif
 
-#include "container/mpsc_queue.hh"
-#include "container/spmc_queue.hh"
-#include "native/fiber.hh"
-#include "native/thread.hh"
-#include "native/util.hh"
+#include <task-dispatcher/common/system_info.hh>
+#include <task-dispatcher/container/mpmc_queue.hh>
+#include <task-dispatcher/container/mpsc_queue.hh>
+#include <task-dispatcher/container/spmc_queue.hh>
+#include <task-dispatcher/container/task.hh>
+#include <task-dispatcher/native/fiber.hh>
+#include <task-dispatcher/native/thread.hh>
+#include <task-dispatcher/native/util.hh>
+#include <task-dispatcher/sync.hh>
+
+namespace td
+{
+class Scheduler;
+}
 
 namespace
 {
@@ -50,13 +63,132 @@ constexpr bool const gc_warn_timeouts = false;
 // If true, print a warning to stderr if a deadlock is heuristically detected
 constexpr bool const gc_warn_deadlocks = true;
 
-thread_local td::Scheduler* sCurrentScheduler = nullptr;
+thread_local td::Scheduler* sCurrentSchedulerOnThread = nullptr;
+td::Scheduler* gCurrentScheduler = nullptr;
 }
 
 
 namespace td
 {
-using resumable_fiber_mpsc_queue = container::FIFOQueue<Scheduler::fiber_index_t, 32>;
+// Fiber-based task scheduler
+// Never allocates after the main task starts executing
+// submitTasks and wait must only be called from inside scheduler tasks
+// td::sync objects passed to submitTasks must eventually be waited upon using wait
+class Scheduler
+{
+public:
+    struct tls_t;
+
+public:
+    explicit Scheduler(scheduler_config const& config = scheduler_config());
+    ~Scheduler();
+
+    /// Launch the scheduler with the given main task
+    void start(container::task const& main_task);
+
+    /// acquire a counter
+    [[nodiscard]] handle::counter acquireCounterHandle();
+
+    /// release a counter
+    /// returns the last counter state
+    int releaseCounter(handle::counter c);
+
+    /// release a counter if a target is reached
+    /// returns true if the release succeeded
+    [[nodiscard]] bool releaseCounterIfOnTarget(handle::counter c, int target);
+
+    /// Enqueue the given tasks and associate them with a counter object
+    void submitTasks(container::task* tasks, uint32_t num_tasks, handle::counter c);
+
+    /// Resume execution after the given counter has reached a set target
+    /// returns the counter value before the wait
+    int wait(handle::counter c, bool pinnned = false, int target = 0);
+
+    /// experimental: manually increment a counter, preventing waits to resolve
+    /// returns the new counter state
+    int incrementCounter(handle::counter c, int32_t amount = 1);
+
+    /// Returns the amount of threads this scheduler controls
+    [[nodiscard]] uint32_t getNumThreads() const { return uint32_t(mThreads.size()); }
+
+    /// Returns the scheduler running the current task
+    [[nodiscard]] static Scheduler& Current();
+    /// Returns true if called from inside the scheduler
+    [[nodiscard]] static bool IsInsideScheduler();
+    /// Returns the index of the calling thread, relative to its owning scheduler. returns uint32_t(-1) on unowned threads
+    [[nodiscard]] static uint32_t CurrentThreadIndex();
+    /// Returns the index of the calling fiber, relative to its owning scheduler. returns uint32_t(-1) on unowned threads
+    [[nodiscard]] static uint32_t CurrentFiberIndex();
+
+public:
+    using fiber_index_t = uint32_t;
+    using thread_index_t = uint32_t;
+    using counter_index_t = uint16_t; // Must fit into task metadata
+    static auto constexpr invalid_fiber = fiber_index_t(-1);
+    static auto constexpr invalid_thread = thread_index_t(-1);
+    static auto constexpr invalid_counter = counter_index_t(-1);
+
+    // private:
+    enum class fiber_destination_e : uint8_t;
+    struct worker_thread_t;
+    struct worker_fiber_t;
+    struct atomic_counter_t;
+
+    // private:
+    std::atomic_bool mIsShuttingDown = {false};
+    scheduler_config mConfig;
+
+    cc::alloc_array<worker_thread_t> mThreads;
+    cc::alloc_array<worker_fiber_t> mFibers;
+    cc::alloc_array<atomic_counter_t> mCounters;
+
+    // Queues
+    container::MPMCQueue<container::task> mTasks;
+    container::MPMCQueue<fiber_index_t> mIdleFibers;
+    container::MPMCQueue<fiber_index_t> mResumableFibers;
+    container::MPMCQueue<counter_index_t> mFreeCounters;
+
+    struct AtomicCounterHandleContent
+    {
+        counter_index_t counterIndex = invalid_counter;
+        uint32_t pad = 0;
+    };
+
+    cc::atomic_linked_pool<AtomicCounterHandleContent, true> mCounterHandles;
+
+    // Worker wakeup event
+    native::event_t* mEventWorkAvailable;
+
+    // private:
+    // Callbacks, wrapped into a friend struct for member access
+    struct callback_funcs;
+    friend struct callback_funcs;
+
+    // private:
+    fiber_index_t acquireFreeFiber();
+
+    void yieldToFiber(fiber_index_t target_fiber, fiber_destination_e own_destination);
+    void cleanUpPrevFiber();
+
+    bool getNextTask(container::task& task);
+    bool tryResumeFiber(fiber_index_t fiber);
+
+    bool counterAddWaitingFiber(atomic_counter_t& counter, fiber_index_t fiber_index, thread_index_t pinned_thread_index, int counter_target, int& out_counter_val);
+    void counterCheckWaitingFibers(atomic_counter_t& counter, int value);
+
+    int counterIncrement(atomic_counter_t& counter, int amount = 1);
+
+    bool enqueueTasks(td::container::task* tasks, uint32_t num_tasks, handle::counter counter);
+
+    Scheduler(Scheduler const& other) = delete;
+    Scheduler(Scheduler&& other) noexcept = delete;
+    Scheduler& operator=(Scheduler const& other) = delete;
+    Scheduler& operator=(Scheduler&& other) noexcept = delete;
+};
+
+
+using resumable_fiber_mpsc_queue = td::container::FIFOQueue<td::Scheduler::fiber_index_t, 32>;
+
 
 struct Scheduler::atomic_counter_t
 {
@@ -68,7 +200,8 @@ struct Scheduler::atomic_counter_t
         std::atomic_bool in_use{true};                       // whether this slot in the array is currently being processed
     };
 
-    std::atomic<int> count; // The value of this counter
+    // The value of this counter
+    std::atomic<int> count;
 
     static constexpr uint32_t max_waiting = 32;
     cc::array<waiting_fiber_t, max_waiting> waiting_fibers = {};
@@ -212,7 +345,7 @@ struct Scheduler::callback_funcs
 
         // Register thread local current scheduler variable
         Scheduler* const scheduler = worker_arg->owning_scheduler;
-        sCurrentScheduler = scheduler;
+        sCurrentSchedulerOnThread = scheduler;
 
         s_tls.reset();
         s_tls.thread_index = worker_arg->index;
@@ -560,6 +693,8 @@ bool td::Scheduler::tryResumeFiber(td::Scheduler::fiber_index_t fiber)
 
 bool td::Scheduler::counterAddWaitingFiber(td::Scheduler::atomic_counter_t& counter, fiber_index_t fiber_index, thread_index_t pinned_thread_index, int counter_target, int& out_counter_val)
 {
+    CC_ASSERT(counter_target == 0 && "unimplemented");
+
     for (auto i = 0u; i < atomic_counter_t::max_waiting; ++i)
     {
         // Acquire free waiting slot
@@ -675,8 +810,9 @@ td::Scheduler::Scheduler(scheduler_config const& config)
     mResumableFibers(config.num_fibers, config.static_alloc),
     mFreeCounters(config.max_num_counters, config.static_alloc)
 {
-    CC_ASSERT(config.is_valid() && "Scheduler config invalid, use scheduler_config_t::validate()");
-    CC_ASSERT((config.num_threads <= system::num_logical_cores()) && "More threads than physical cores configured");
+    mConfig.ceil_to_pow2();
+    CC_ASSERT(mConfig.is_valid() && "Scheduler config invalid, use scheduler_config_t::validate()");
+    CC_ASSERT((mConfig.num_threads <= system::num_logical_cores()) && "More threads than physical cores configured");
 
     mEventWorkAvailable = config.static_alloc->new_t<native::event_t>();
 }
@@ -743,26 +879,20 @@ int td::Scheduler::wait(handle::counter c, bool pinnned, int target)
     return counter_value_before_wait;
 }
 
-int td::Scheduler::incrementCounter(td::handle::counter c, uint32_t amount)
+int td::Scheduler::incrementCounter(td::handle::counter c, int32_t amount)
 {
     auto const counter_index = mCounterHandles.get(c._value).counterIndex;
-    return counterIncrement(mCounters[counter_index], int(amount));
+    return counterIncrement(mCounters[counter_index], amount);
 }
 
-int td::Scheduler::decrementCounter(td::handle::counter c, uint32_t amount)
-{
-    auto const counter_index = mCounterHandles.get(c._value).counterIndex;
-    return counterIncrement(mCounters[counter_index], int(amount) * -1);
-}
+td::Scheduler& td::Scheduler::Current() { return *sCurrentSchedulerOnThread; }
 
-td::Scheduler& td::Scheduler::Current() { return *sCurrentScheduler; }
-
-bool td::Scheduler::IsInsideScheduler() { return sCurrentScheduler != nullptr; }
+bool td::Scheduler::IsInsideScheduler() { return sCurrentSchedulerOnThread != nullptr; }
 
 uint32_t td::Scheduler::CurrentThreadIndex() { return s_tls.thread_index; }
 uint32_t td::Scheduler::CurrentFiberIndex() { return s_tls.current_fiber_index; }
 
-void td::Scheduler::start(td::container::task main_task)
+void td::Scheduler::start(td::container::task const& main_task)
 {
     // Re-default all arrays, as multiple starts are possible
     mThreads.reset(mConfig.static_alloc, mConfig.num_threads);
@@ -805,7 +935,7 @@ void td::Scheduler::start(td::container::task main_task)
         }
 
         s_tls.reset();
-        sCurrentScheduler = this;
+        sCurrentSchedulerOnThread = this;
 
         // Create main fiber on this thread
         native::create_main_fiber(s_tls.thread_fiber);
@@ -950,7 +1080,7 @@ void td::Scheduler::start(td::container::task main_task)
             mCounterHandles.destroy();
 
             // Clear sCurrentScheduler
-            sCurrentScheduler = nullptr;
+            sCurrentSchedulerOnThread = nullptr;
         }
     }
 
@@ -963,3 +1093,75 @@ void td::Scheduler::start(td::container::task main_task)
 
     native::destroy_event(*mEventWorkAvailable);
 }
+
+void td::launchScheduler(scheduler_config const& config, container::task const& mainTask)
+{
+    // init
+    CC_ASSERT(gCurrentScheduler == nullptr && "More than one scheduler running at once");
+    gCurrentScheduler = config.static_alloc->new_t<td::Scheduler>(config);
+
+    // launch
+    gCurrentScheduler->start(mainTask);
+    // -- main task returned
+
+    // shutdown
+    CC_ASSERT(gCurrentScheduler != nullptr && "Uninitialized scheduler");
+    CC_ASSERT(!isInsideScheduler() && "Must not destroy the scheduler from inside scheduler tasks");
+    auto* const staticAlloc = gCurrentScheduler->mConfig.static_alloc;
+    staticAlloc->delete_t(gCurrentScheduler);
+    gCurrentScheduler = nullptr;
+}
+
+td::handle::counter td::acquireCounter()
+{
+    CC_ASSERT(isInsideScheduler() && "Called from outside scheduler, use td::launchScheduler() first");
+    return gCurrentScheduler->acquireCounterHandle();
+}
+
+int32_t td::releaseCounter(handle::counter counter)
+{
+    CC_ASSERT(isInsideScheduler() && "Called from outside scheduler, use td::launchScheduler() first");
+    return gCurrentScheduler->releaseCounter(counter);
+}
+
+bool td::releaseCounterIfOnZero(handle::counter counter)
+{
+    CC_ASSERT(isInsideScheduler() && "Called from outside scheduler, use td::launchScheduler() first");
+    return gCurrentScheduler->releaseCounterIfOnTarget(counter, 0);
+}
+
+void td::submitTasks(handle::counter counter, cc::span<container::task> tasks)
+{
+    CC_ASSERT(isInsideScheduler() && "Called from outside scheduler, use td::launchScheduler() first");
+    gCurrentScheduler->submitTasks(tasks.data(), (uint32_t)tasks.size(), counter);
+}
+
+int32_t td::waitForCounter(handle::counter counter, bool pinned)
+{
+    CC_ASSERT(isInsideScheduler() && "Called from outside scheduler, use td::launchScheduler() first");
+    return gCurrentScheduler->wait(counter, pinned, 0);
+}
+
+int32_t td::incrementCounter(handle::counter c, uint32_t amount)
+{
+    CC_ASSERT(isInsideScheduler() && "Called from outside scheduler, use td::launchScheduler() first");
+    return gCurrentScheduler->incrementCounter(c, amount);
+}
+
+int32_t td::decrementCounter(handle::counter c, uint32_t amount)
+{
+    CC_ASSERT(isInsideScheduler() && "Called from outside scheduler, use td::launchScheduler() first");
+    return gCurrentScheduler->incrementCounter(c, -1 * (int32_t)amount);
+}
+
+uint32_t td::getNumThreadsInScheduler()
+{
+    CC_ASSERT(isInsideScheduler() && "Called from outside scheduler, use td::launchScheduler() first");
+    return gCurrentScheduler->getNumThreads();
+}
+
+bool td::isInsideScheduler() { return sCurrentSchedulerOnThread != nullptr; }
+
+uint32_t td::getCurrentThreadIndex() { return td::Scheduler::CurrentThreadIndex(); }
+
+uint32_t td::getCurrentFiberIndex() { return td::Scheduler::CurrentFiberIndex(); }

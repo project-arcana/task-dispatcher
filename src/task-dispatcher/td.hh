@@ -86,7 +86,7 @@ void submit(sync& s, F&& fun, Args&&... args)
     static_assert(std::is_same_v<std::invoke_result_t<F, Args...>, void>, "return must be void");
     // A lambda callung fun(args...), but moving the args instead of copying them into the lambda
     container::task dispatch([fun, tup = cc::tuple(cc::move(args)...)] { cc::apply([&fun](auto&&... args) { fun(decltype(args)(args)...); }, tup); });
-    submit_raw(s, &dispatch, 1);
+    submit_raw(s, cc::span{dispatch});
 }
 
 /// submit a task based on a member function, with arguments passed to it
@@ -100,7 +100,7 @@ void submit(sync& s, F func, FObj& inst, Args&&... args)
     container::task dispatch([func, inst_ptr = &inst, tup = cc::tuple(cc::move(args)...)]
                              { cc::apply([&func, &inst_ptr](auto&&... args) { (inst_ptr->*func)(decltype(args)(args)...); }, tup); });
 
-    submit_raw(s, &dispatch, 1);
+    submit_raw(s, cc::span{dispatch});
 }
 
 /// submits tasks calling a lambda "void f(unsigned i)" for each i from 0 to n
@@ -111,9 +111,13 @@ void submit_n(sync& sync, F&& func, unsigned n, cc::allocator* scratch_alloc = c
     static_assert(std::is_same_v<std::invoke_result_t<F, unsigned>, void>, "return must be void");
 
     auto tasks = cc::alloc_array<td::container::task>::uninitialized(n, scratch_alloc);
+
     for (auto i = 0u; i < n; ++i)
+    {
         tasks[i].lambda([=] { func(i); });
-    submit_raw(sync, tasks.data(), n);
+    }
+
+    submit_raw(sync, tasks);
 }
 
 /// submits tasks calling a lambda "void f(T& value)" for each element in the span
@@ -124,10 +128,13 @@ void submit_each_ref(sync& sync, F&& func, cc::span<T> vals, cc::allocator* scra
     static_assert(std::is_same_v<std::invoke_result_t<F, T&>, void>, "return must be void");
 
     auto tasks = cc::alloc_array<td::container::task>::uninitialized(vals.size(), scratch_alloc);
-    for (auto i = 0u; i < vals.size(); ++i)
-        tasks[i].lambda([func, val_ptr = vals.data() + i] { func(*val_ptr); });
 
-    submit_raw(sync, tasks.data(), unsigned(vals.size()));
+    for (auto i = 0u; i < vals.size(); ++i)
+    {
+        tasks[i].lambda([func, val_ptr = vals.data() + i] { func(*val_ptr); });
+    }
+
+    submit_raw(sync, tasks);
 }
 
 /// submits tasks calling a lambda "void f(T value)" for each element in the span
@@ -138,10 +145,13 @@ void submit_each_copy(sync& sync, F&& func, cc::span<T> vals, cc::allocator* scr
     static_assert(std::is_same_v<std::invoke_result_t<F, T>, void>, "return must be void");
 
     auto tasks = cc::alloc_array<td::container::task>::uninitialized(vals.size(), scratch_alloc);
-    for (auto i = 0u; i < vals.size(); ++i)
-        tasks[i].lambda([func, val_copy = vals[i]] { func(val_copy); });
 
-    submit_raw(sync, tasks.data(), unsigned(vals.size()));
+    for (auto i = 0u; i < vals.size(); ++i)
+    {
+        tasks[i].lambda([func, val_copy = vals[i]] { func(val_copy); });
+    }
+
+    submit_raw(sync, tasks);
 }
 
 /// submits tasks calling a lambda "void f(unsigned start, unsigned end)" for multiple batches over the range 0 to n
@@ -165,7 +175,7 @@ uint32_t submit_batched(sync& sync, F&& func, uint32_t n, uint32_t num_batches_m
         tasks[batch].lambda([=] { func(start, end); });
     }
 
-    submit_raw(sync, tasks.data(), num_batches);
+    submit_raw(sync, tasks);
     return num_batches;
 }
 
@@ -196,7 +206,7 @@ template <class F>
     {
         sync res;
         container::task dispatch([=] { fun(); });
-        submit_raw(res, &dispatch, 1);
+        submit_raw(res, cc::span{dispatch});
         return res;
     }
     else
@@ -205,7 +215,7 @@ template <class F>
         future<R> res;
         R* const result_ptr = res.get_raw_pointer();
         container::task dispatch([=] { *result_ptr = fun(); });
-        submit_raw(s, &dispatch, 1);
+        submit_raw(s, cc::span{dispatch});
         res.set_sync(s);
         return res;
     }
@@ -225,7 +235,7 @@ template <class F, class FObj, class... Args, cc::enable_if<std::is_member_funct
         container::task dispatch([func, inst_ptr = &inst, tup = cc::tuple(cc::move(args)...)]
                                  { cc::apply([&func, &inst_ptr](auto&&... args) { (inst_ptr->*func)(decltype(args)(args)...); }, tup); });
 
-        submit_raw(res, &dispatch, 1);
+        submit_raw(res, cc::span{dispatch});
         return res;
     }
     else
@@ -239,7 +249,7 @@ template <class F, class FObj, class... Args, cc::enable_if<std::is_member_funct
             [func, inst_ptr = &inst, result_ptr, tup = cc::tuple(cc::move(args)...)]
             { cc::apply([&func, &inst_ptr, &result_ptr](auto&&... args) { *result_ptr = (inst_ptr->*func)(decltype(args)(args)...); }, tup); });
 
-        submit_raw(s, &dispatch, 1);
+        submit_raw(s, cc::span{dispatch});
         res.set_sync(s);
         return res;
     }
@@ -260,7 +270,7 @@ template <class F, class... Args, cc::enable_if<std::is_invocable_v<F, Args...> 
         container::task dispatch([fun, tup = cc::tuple(cc::move(args)...)]
                                  { cc::apply([&fun](auto&&... args) { fun(decltype(args)(args)...); }, tup); });
 
-        submit_raw(res, &dispatch, 1);
+        submit_raw(res, cc::span{dispatch});
         return res;
     }
     else
@@ -273,7 +283,7 @@ template <class F, class... Args, cc::enable_if<std::is_invocable_v<F, Args...> 
         container::task dispatch([fun, result_ptr, tup = cc::tuple(cc::move(args)...)]
                                  { cc::apply([&fun, &result_ptr](auto&&... args) { *result_ptr = fun(decltype(args)(args)...); }, tup); });
 
-        submit_raw(s, &dispatch, 1);
+        submit_raw(s, cc::span{dispatch});
         res.set_sync(s);
         return res;
     }
