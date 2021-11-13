@@ -7,6 +7,7 @@
 namespace td
 {
 // This is not synchronized at all, TODO: Replace with Yukov or similar
+// what we would need here is an MPSC queue
 template <class T, uint32_t N>
 struct FIFOQueue
 {
@@ -55,9 +56,10 @@ public:
     }
 
     bool empty() const { return mTail == -1; }
+
     bool full() const
     {
-        auto next_head = mHead + 1;
+        int next_head = mHead + 1;
         if (next_head >= N)
             next_head -= N;
 

@@ -29,6 +29,9 @@ struct TD_API SchedulerConfig
     // stack size of each fiber in bytes
     uint32_t fiberStackSizeBytes = 64 * 1024;
 
+    // maximum amount of fibers waiting on a single counter
+    uint32_t maxNumWaitingFibersPerCounter = 256;
+
     // whether to lock the main and worker threads to logical cores
     // can degrade performance on a multitasking (desktop) OS depending on other process load
     // recommended on console-like plattforms, embedded systems

@@ -16,11 +16,13 @@ TD_API void launchScheduler(SchedulerConfig const& config, Task const& mainTask)
 TD_API [[nodiscard]] CounterHandle acquireCounter();
 
 // release a counter handle, returns last counter value
+// must not be called concurrently for the same counter
 TD_API int32_t releaseCounter(CounterHandle counter);
 
 // release a counter handle if it reached zero
+// can be called concurrently for the same counter (only one caller will win)
 // returns true if the counter was released
-TD_API [[nodiscard]] bool releaseCounterIfOnZero(CounterHandle counter);
+TD_API bool releaseCounterIfOnZero(CounterHandle counter);
 
 // submit multiple tasks to the scheduler for immediate execution
 // the counter is incremented by the amount of tasks and decremented once per completed task
