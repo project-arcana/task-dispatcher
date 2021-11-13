@@ -21,13 +21,16 @@ template <class T>
 struct MPMCQueue
 {
 public:
-    explicit MPMCQueue(size_t buffer_size, cc::allocator* allocator)
-    {
-        CC_ASSERT(buffer_size >= 2 && cc::is_pow2(buffer_size) && "MPMCQueue size not a power of two");
+    MPMCQueue() = default;
+    explicit MPMCQueue(size_t buffer_size, cc::allocator* allocator) { initialize(buffer_size, allocator); }
 
-        mBufferMask = buffer_size - 1;
-        mBuffer.reset(allocator, buffer_size);
-        for (size_t i = 0; i != buffer_size; ++i)
+    void initialize(size_t bufferSize, cc::allocator* alloc)
+    {
+        CC_ASSERT(bufferSize >= 2 && cc::is_pow2(bufferSize) && "MPMCQueue size not a power of two");
+
+        mBufferMask = bufferSize - 1;
+        mBuffer.reset(alloc, bufferSize);
+        for (size_t i = 0; i != bufferSize; ++i)
         {
             mBuffer[i].sequence_.store(i, std::memory_order_relaxed);
         }
@@ -93,10 +96,10 @@ private:
 
     alignas(l1_cacheline_size) cc::alloc_array<cell> mBuffer;
 
-    size_t mBufferMask;
+    size_t mBufferMask = 0;
 
-    alignas(l1_cacheline_size) std::atomic<size_t> mEnqueuePos;
-    alignas(l1_cacheline_size) std::atomic<size_t> mDequeuePos;
+    alignas(l1_cacheline_size) std::atomic<size_t> mEnqueuePos = {0};
+    alignas(l1_cacheline_size) std::atomic<size_t> mDequeuePos = {0};
 
     MPMCQueue(MPMCQueue const& other) = delete;
     MPMCQueue(MPMCQueue&& other) noexcept = delete;
