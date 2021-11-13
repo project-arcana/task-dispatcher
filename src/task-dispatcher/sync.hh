@@ -19,6 +19,8 @@ struct CounterHandle
     bool operator!=(CounterHandle rhs) const { return _value != rhs._value; }
 };
 
+inline constexpr CounterHandle NullCounterHandle = CounterHandle{};
+
 // An automatically managed CounterHandle
 struct Sync
 {

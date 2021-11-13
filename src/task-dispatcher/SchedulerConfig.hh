@@ -3,6 +3,7 @@
 #include <stdint.h>
 
 #include <clean-core/function_ptr.hh>
+#include <clean-core/fwd.hh>
 
 #include <task-dispatcher/common/api.hh>
 #include <task-dispatcher/common/system_info.hh>
