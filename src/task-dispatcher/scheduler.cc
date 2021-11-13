@@ -149,26 +149,19 @@ struct tls_t
         is_thread_waiting = false;
     }
 };
+
+thread_local tls_t s_tls;
 }
 
 
 namespace td
 {
 // NOTE: this was moved to the TU, it should eventually dissolve into the free functions listed below
-
-// Fiber-based task scheduler
-// Never allocates after the main task starts executing
-// submitTasks and wait must only be called from inside scheduler tasks
-// td::sync objects passed to submitTasks must eventually be waited upon using wait
 class Scheduler
 {
 public:
     /// Launch the scheduler with the given main task
     void start(Task const& main_task);
-
-    /// Resume execution after the given counter has reached a set target
-    /// returns the counter value before the wait
-    int wait(CounterHandle c, bool pinnned = false, int target = 0);
 
 public:
     // private:
@@ -194,7 +187,7 @@ public:
     cc::atomic_linked_pool<AtomicCounterHandleContent, true> mCounterHandles;
 
     // Worker wakeup event
-    native::event_t* mEventWorkAvailable;
+    native::event_t mEventWorkAvailable;
 
     // private:
     // Callbacks, wrapped into a friend struct for member access
@@ -217,11 +210,6 @@ public:
 
     bool enqueueTasks(td::Task* tasks, uint32_t num_tasks, CounterHandle counter);
 };
-}
-
-namespace
-{
-thread_local tls_t s_tls;
 }
 
 namespace td
@@ -348,7 +336,7 @@ struct Scheduler::callback_funcs
                             // reached max backoff, wait for global event
 
                             // wait until the global event is signalled, with timeout
-                            bool signalled = native::wait_for_event(*scheduler->mEventWorkAvailable, 10);
+                            bool signalled = native::wait_for_event(scheduler->mEventWorkAvailable, 10);
 
                             if constexpr (gc_warn_timeouts)
                             {
@@ -491,7 +479,7 @@ bool td::Scheduler::getNextTask(td::Task& task)
                 }
 
                 // signal the global event
-                native::signal_event(*mEventWorkAvailable);
+                native::signal_event(mEventWorkAvailable);
             }
             // Fallthrough to global resumables
         }
@@ -515,7 +503,7 @@ bool td::Scheduler::getNextTask(td::Task& task)
                 CC_ASSERT(success);
 
                 // signal the global event
-                native::signal_event(*mEventWorkAvailable);
+                native::signal_event(mEventWorkAvailable);
             }
             // Fallthrough to global pending Chase-Lev / MPMC
         }
@@ -643,7 +631,7 @@ void td::Scheduler::counterCheckWaitingFibers(atomic_counter_t& counter, int val
             }
 
             // signal the global event
-            native::signal_event(*mEventWorkAvailable);
+            native::signal_event(mEventWorkAvailable);
 
             // Free the slot
             counter.free_waiting_slots[i].store(true, std::memory_order_release);
@@ -665,39 +653,6 @@ int td::Scheduler::counterIncrement(atomic_counter_t& counter, int amount)
     return new_val;
 }
 
-int td::Scheduler::wait(CounterHandle c, bool pinnned, int target)
-{
-    CC_ASSERT(target >= 0 && "sync counter target must not be negative");
-    CC_ASSERT(mCounterHandles.is_alive(c._value) && "waited on expired counter handle");
-
-    auto const counter_index = mCounterHandles.get(c._value).counterIndex;
-
-    // The current fiber is now waiting, but not yet cleaned up
-    mFibers[s_tls.current_fiber_index].is_waiting_cleaned_up.store(false, std::memory_order_release);
-
-    s_tls.is_thread_waiting = true;
-
-    int counter_value_before_wait = -1;
-    if (counterAddWaitingFiber(mCounters[counter_index], s_tls.current_fiber_index, pinnned ? s_tls.thread_index : invalid_thread, target, counter_value_before_wait))
-    {
-        // Already done
-        //        KW_LOG_DIAG("[wait] Wait for counter " << int(counter_index) << " is over early, resuming immediately");
-    }
-    else
-    {
-        // Not already done, prepare to yield
-        //        KW_LOG_DIAG("[wait] Waiting for counter " << int(counter_index) << ", yielding");
-        yieldToFiber(acquireFreeFiber(), fiber_destination_e::waiting);
-    }
-
-    s_tls.is_thread_waiting = false;
-
-    // Either the counter was already on target, or this fiber has been awakened because it is now on target,
-    // return execution
-
-    return counter_value_before_wait;
-}
-
 void td::Scheduler::start(td::Task const& main_task)
 {
     // Re-default all arrays, as multiple starts are possible
@@ -715,7 +670,7 @@ void td::Scheduler::start(td::Task const& main_task)
 
     mIsShuttingDown.store(false, std::memory_order_seq_cst);
 
-    native::create_event(mEventWorkAvailable);
+    native::create_event(&mEventWorkAvailable);
 
 #ifdef CC_OS_WINDOWS
     // attempt to make the win32 scheduler as granular as possible for faster Sleep(1)
@@ -828,7 +783,7 @@ void td::Scheduler::start(td::Task const& main_task)
         }
 
         // wake up all threads
-        native::signal_event(*mEventWorkAvailable);
+        native::signal_event(mEventWorkAvailable);
 
         // Delete the main fiber
         native::delete_main_fiber(s_tls.thread_fiber);
@@ -837,7 +792,7 @@ void td::Scheduler::start(td::Task const& main_task)
         for (auto i = 1u; i < mThreads.size(); ++i)
         {
             // re-signal before joining each thread
-            native::signal_event(*mEventWorkAvailable);
+            native::signal_event(mEventWorkAvailable);
             native::join_thread(mThreads[i].native);
         }
 
@@ -885,7 +840,7 @@ void td::Scheduler::start(td::Task const& main_task)
     native::win32_shutdown_utils();
 #endif
 
-    native::destroy_event(*mEventWorkAvailable);
+    native::destroy_event(mEventWorkAvailable);
 }
 
 void td::launchScheduler(SchedulerConfig const& config, Task const& mainTask)
@@ -907,7 +862,6 @@ void td::launchScheduler(SchedulerConfig const& config, Task const& mainTask)
     gCurrentScheduler->mIdleFibers.initialize(config.numFibers, config.staticAlloc);
     gCurrentScheduler->mResumableFibers.initialize(config.numFibers, config.staticAlloc);
     gCurrentScheduler->mFreeCounters.initialize(config.maxNumCounters, config.staticAlloc);
-    gCurrentScheduler->mEventWorkAvailable = config.staticAlloc->new_t<native::event_t>();
 
     // launch
     gCurrentScheduler->start(mainTask);
@@ -918,7 +872,6 @@ void td::launchScheduler(SchedulerConfig const& config, Task const& mainTask)
     CC_ASSERT(!isInsideScheduler() && "Must not destroy the scheduler from inside scheduler threads");
 
     auto* const staticAlloc = gCurrentScheduler->mConfig.staticAlloc;
-    staticAlloc->delete_t(gCurrentScheduler->mEventWorkAvailable);
     staticAlloc->delete_t(gCurrentScheduler);
     gCurrentScheduler = nullptr;
 }
@@ -992,7 +945,7 @@ void td::submitTasks(CounterHandle c, cc::span<Task> tasks)
     }
 
     // signal the global event
-    native::signal_event(*gCurrentScheduler->mEventWorkAvailable);
+    native::signal_event(gCurrentScheduler->mEventWorkAvailable);
 
     CC_RUNTIME_ASSERT(success && "Task queue is full, consider increasing config.maxNumTasks");
 }
