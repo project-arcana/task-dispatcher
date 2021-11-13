@@ -54,6 +54,12 @@
 namespace td
 {
 struct Scheduler;
+
+// checks about td::Task
+static_assert(sizeof(td::Task) == td::l1_cacheline_size * TD_FIXED_TASK_SIZE, "task type is unexpectedly large");
+static_assert(sizeof(td::Task[8]) == td::l1_cacheline_size * TD_FIXED_TASK_SIZE * 8, "task arrays are unexpectedly large, overaligned?");
+static_assert(alignof(td::Task) >= td::l1_cacheline_size, "task type risks misalignment");
+static_assert(std::is_trivial_v<td::Task>, "task is not trivial");
 }
 
 namespace
@@ -591,6 +597,9 @@ bool td::Scheduler::counterAddWaitingFiber(atomic_counter_t& counter, fiber_inde
 
 #else
 
+    // WARNING: this is very sensitive code, think 5 times before changing anything
+    // consider interleavings of this function and counterCheckWaitingFibers
+
     for (auto i = 0u; i < atomic_counter_t::max_waiting; ++i)
     {
         // Acquire free waiting slot
@@ -674,6 +683,10 @@ void td::Scheduler::counterCheckWaitingFibers(atomic_counter_t& counter, int val
     native::signal_event(mEventWorkAvailable);
 
 #else
+
+    // WARNING: this is very sensitive code, think 5 times before changing anything
+    // consider interleavings of this function and counterAddWaitingFiber
+
     // Go over each waiting fiber slot
     for (auto i = 0u; i < atomic_counter_t::max_waiting; ++i)
     {
