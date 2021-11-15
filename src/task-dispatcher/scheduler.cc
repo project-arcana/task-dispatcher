@@ -35,7 +35,7 @@
 // new waiting mechanism
 // currently broken, WIP
 // it is developed with the goal of increasing the maximum waiting fibers on a single counter
-#define TD_NEW_WAITING_FIBER_MECHANISM false
+#define TD_NEW_WAITING_FIBER_MECHANISM true
 
 // If true, print a warning to stderr if waiting on the work event times out (usually not an error)
 #define TD_WARN_ON_WAITING_TIMEOUTS false
@@ -115,8 +115,8 @@ struct atomic_counter_t
     std::atomic<int> count;
 
 #if TD_NEW_WAITING_FIBER_MECHANISM
-    WaitingFiberVector waitingVectors[2];
-    std::atomic_uint32_t currentWaitingVectorIdx;
+    cc::spin_lock spinLockWaitingVector;
+    WaitingFiberVector waitingVector;
 #else
     static constexpr uint32_t max_waiting = 32;
     cc::array<waiting_fiber_t, max_waiting> waiting_fibers = {};
@@ -129,11 +129,7 @@ struct atomic_counter_t
         count.store(0, std::memory_order_release);
 
 #if TD_NEW_WAITING_FIBER_MECHANISM
-        currentWaitingVectorIdx.store(0);
-        for (WaitingFiberVector& waitingVec : waitingVectors)
-        {
-            waitingVec.numElements.store(0);
-        }
+        waitingVector.numElements.store(0);
 #else
         for (auto i = 0u; i < max_waiting; ++i)
         {
@@ -330,7 +326,7 @@ static void entrypointFiber(void* arg_void)
 
 #ifdef CC_OS_WINDOWS
     __try
-#endif
+#endif // CC_OS_WINDOWS
     {
         scheduler->cleanUpPrevFiber();
 
@@ -365,7 +361,7 @@ static void entrypointFiber(void* arg_void)
                 // and post-loop wakeup time (falls back to nop on pre-SSE2)
                 // (not at all OS scheduler related, locks cores at 100%)
                 _mm_pause();
-#else
+#else // !TD_ALWAYS_SPINWAIT
                 // only perform OS wait if backoff is at maximum and this thread is not waiting
                 if (backoff_num_pauses == lc_max_backoff_pauses && !gTLS.is_thread_waiting)
                 {
@@ -379,9 +375,9 @@ static void entrypointFiber(void* arg_void)
                     {
                         fprintf(stderr, "[td] Scheduler warning: Work event wait timed out\n");
                     }
-#else
+#else // !TD_WARN_ON_WAITING_TIMEOUTS
                     (void)signalled;
-#endif
+#endif // TD_WARN_ON_WAITING_TIMEOUTS
                 }
                 else
                 {
@@ -394,7 +390,7 @@ static void entrypointFiber(void* arg_void)
                         _mm_pause();
                     }
                 }
-#endif
+#endif // TD_ALWAYS_SPINWAIT
             }
         }
 
@@ -573,11 +569,8 @@ bool td::Scheduler::counterAddWaitingFiber(atomic_counter_t& counter, fiber_inde
 
 #if TD_NEW_WAITING_FIBER_MECHANISM
 
-    uint32_t const waitingVecIdx = counter.currentWaitingVectorIdx.load();
-    WaitingFiberVector& waitingVec = counter.waitingVectors[waitingVecIdx];
-
     // Check if already done
-    auto const counter_val = counter.count.load(std::memory_order_relaxed);
+    int const counter_val = counter.count.load(std::memory_order_relaxed);
     out_counter_val = counter_val;
 
     if (counter_target == counter_val)
@@ -589,9 +582,11 @@ bool td::Scheduler::counterAddWaitingFiber(atomic_counter_t& counter, fiber_inde
     thread_index_t const prevPinnedThreadIdx = mFibers[fiber_index].pinned_thread_index.exchange(pinned_thread_index);
     CC_ASSERT(prevPinnedThreadIdx == invalid_thread && "unexpected / race");
 
-    uint32_t const newFiberIdx = waitingVec.numElements.fetch_add(1);
+    auto lg = cc::lock_guard(counter.spinLockWaitingVector);
+
+    uint32_t const newFiberIdx = counter.waitingVector.numElements.fetch_add(1);
     CC_ASSERT(newFiberIdx < mConfig.maxNumWaitingFibersPerCounter && "Too many fibers waiting on a single counter");
-    waitingVec.elements[newFiberIdx] = fiber_index;
+    counter.waitingVector.elements[newFiberIdx] = fiber_index;
 
     return false;
 
@@ -647,17 +642,26 @@ void td::Scheduler::counterCheckWaitingFibers(atomic_counter_t& counter, int val
 
 #if TD_NEW_WAITING_FIBER_MECHANISM
 
-    // XOR index with 1, flipping it between 0 and 1
-    uint32_t prevVectorIdx = counter.currentWaitingVectorIdx.fetch_xor(1u);
-    // the other vector (the one flipped towards) must be empty, otherweise this function raced
-    CC_ASSERT(counter.waitingVectors[prevVectorIdx ^ 1].numElements.load() == 0 && "raced on waiting fiber vector swap");
+    fiber_index_t* pReceivedFibers = nullptr;
+    uint32_t numReceivedFibers = 0;
 
-    WaitingFiberVector& prevVector = counter.waitingVectors[prevVectorIdx];
-    uint32_t const prevVectorSize = prevVector.numElements.load();
-
-    for (auto i = 0u; i < prevVectorSize; ++i)
     {
-        fiber_index_t const fiberIdx = prevVector.elements[i];
+        auto lg = cc::lock_guard(counter.spinLockWaitingVector);
+
+        // clear the previous
+        uint32_t const prevVectorSize = counter.waitingVector.numElements.exchange(0);
+
+        numReceivedFibers = prevVectorSize;
+        if (numReceivedFibers > 0)
+        {
+            pReceivedFibers = reinterpret_cast<fiber_index_t*>(alloca(sizeof(pReceivedFibers[0]) * prevVectorSize));
+            memcpy(pReceivedFibers, counter.waitingVector.elements, numReceivedFibers * sizeof(pReceivedFibers[0]));
+        }
+    }
+
+    for (auto i = 0u; i < numReceivedFibers; ++i)
+    {
+        fiber_index_t const fiberIdx = pReceivedFibers[i];
 
         thread_index_t const pinnedThreadIdx = mFibers[fiberIdx].pinned_thread_index.exchange(invalid_thread);
 
@@ -768,11 +772,8 @@ void td::Scheduler::start(td::Task const& main_task)
 #if TD_NEW_WAITING_FIBER_MECHANISM
     for (atomic_counter_t& counter : mCounters)
     {
-        for (WaitingFiberVector& waitingVector : counter.waitingVectors)
-        {
-            waitingVector.numElements.store(0);
-            waitingVector.elements = mConfig.staticAlloc->new_array_sized<fiber_index_t>(mConfig.maxNumWaitingFibersPerCounter);
-        }
+        counter.waitingVector.numElements.store(0);
+        counter.waitingVector.elements = mConfig.staticAlloc->new_array_sized<fiber_index_t>(mConfig.maxNumWaitingFibersPerCounter);
     }
 #endif
 
@@ -914,14 +915,10 @@ void td::Scheduler::start(td::Task const& main_task)
         gSchedulerOnThread = nullptr;
     }
 
-
 #if TD_NEW_WAITING_FIBER_MECHANISM
     for (atomic_counter_t& counter : mCounters)
     {
-        for (WaitingFiberVector& waitingVector : counter.waitingVectors)
-        {
-            mConfig.staticAlloc->delete_array_sized(waitingVector.elements, mConfig.maxNumWaitingFibersPerCounter);
-        }
+        mConfig.staticAlloc->delete_array_sized(counter.waitingVector.elements, mConfig.maxNumWaitingFibersPerCounter);
     }
 #endif
 
