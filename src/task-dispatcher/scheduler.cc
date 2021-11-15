@@ -569,6 +569,8 @@ bool td::Scheduler::counterAddWaitingFiber(atomic_counter_t& counter, fiber_inde
 
 #if TD_NEW_WAITING_FIBER_MECHANISM
 
+    auto lg = cc::lock_guard(counter.spinLockWaitingVector);
+
     // Check if already done
     int const counter_val = counter.count.load(std::memory_order_relaxed);
     out_counter_val = counter_val;
@@ -581,8 +583,6 @@ bool td::Scheduler::counterAddWaitingFiber(atomic_counter_t& counter, fiber_inde
 
     thread_index_t const prevPinnedThreadIdx = mFibers[fiber_index].pinned_thread_index.exchange(pinned_thread_index);
     CC_ASSERT(prevPinnedThreadIdx == invalid_thread && "unexpected / race");
-
-    auto lg = cc::lock_guard(counter.spinLockWaitingVector);
 
     uint32_t const newFiberIdx = counter.waitingVector.numElements.fetch_add(1);
     CC_ASSERT(newFiberIdx < mConfig.maxNumWaitingFibersPerCounter && "Too many fibers waiting on a single counter");
