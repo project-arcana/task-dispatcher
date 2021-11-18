@@ -25,7 +25,7 @@ namespace td
 /// submit a task based on a lambda, with arguments passed to it
 /// arguments are moved into the task
 template <class F, class... Args>
-void submit(Sync& s, F&& fun, Args&&... args)
+[[deprecated("renamed to td::submitCallable()")]] void submit(Sync& s, F&& fun, Args&&... args)
 {
     static_assert(std::is_invocable_v<F, Args...>, "function must be invocable with the given args");
     static_assert(std::is_same_v<std::invoke_result_t<F, Args...>, void>, "return must be void");
@@ -37,7 +37,7 @@ void submit(Sync& s, F&& fun, Args&&... args)
 /// submit a task based on a member function, with arguments passed to it
 /// arguments are moved into the task
 template <class F, class FObj, class... Args, cc::enable_if<std::is_member_function_pointer_v<F>> = true>
-void submit(Sync& s, F func, FObj& inst, Args&&... args)
+[[deprecated("renamed to td::submitMethod()")]] void submit(Sync& s, F func, FObj& inst, Args&&... args)
 {
     static_assert(std::is_invocable_v<F, FObj, Args...>, "function must be invocable with the given args");
     static_assert(std::is_same_v<std::invoke_result_t<F, FObj, Args...>, void>, "return must be void");
@@ -50,7 +50,7 @@ void submit(Sync& s, F func, FObj& inst, Args&&... args)
 
 /// submits tasks calling a lambda "void f(unsigned i)" for each i from 0 to n
 template <class F>
-void submit_n(Sync& sync, F&& func, unsigned n, cc::allocator* scratch_alloc = cc::system_allocator)
+[[deprecated("renamed to td::submitNumbered()")]] void submit_n(Sync& sync, F&& func, unsigned n, cc::allocator* scratch_alloc = cc::system_allocator)
 {
     static_assert(std::is_invocable_v<F, unsigned>, "function must be invocable with index argument");
     static_assert(std::is_same_v<std::invoke_result_t<F, unsigned>, void>, "return must be void");
@@ -67,7 +67,7 @@ void submit_n(Sync& sync, F&& func, unsigned n, cc::allocator* scratch_alloc = c
 
 /// submits tasks calling a lambda "void f(T& value)" for each element in the span
 template <class T, class F>
-void submit_each_ref(Sync& sync, F&& func, cc::span<T> vals, cc::allocator* scratch_alloc = cc::system_allocator)
+[[deprecated("use td::submitBatchedOnArray()")]] void submit_each_ref(Sync& sync, F&& func, cc::span<T> vals, cc::allocator* scratch_alloc = cc::system_allocator)
 {
     static_assert(std::is_invocable_v<F, T&>, "function must be invocable with element reference");
     static_assert(std::is_same_v<std::invoke_result_t<F, T&>, void>, "return must be void");
@@ -84,7 +84,7 @@ void submit_each_ref(Sync& sync, F&& func, cc::span<T> vals, cc::allocator* scra
 
 /// submits tasks calling a lambda "void f(T value)" for each element in the span
 template <class T, class F>
-void submit_each_copy(Sync& sync, F&& func, cc::span<T> vals, cc::allocator* scratch_alloc = cc::system_allocator)
+[[deprecated("use td::submitBatchedOnArray()")]] void submit_each_copy(Sync& sync, F&& func, cc::span<T> vals, cc::allocator* scratch_alloc = cc::system_allocator)
 {
     static_assert(std::is_invocable_v<F, T>, "function must be invocable with element copy");
     static_assert(std::is_same_v<std::invoke_result_t<F, T>, void>, "return must be void");
@@ -102,7 +102,8 @@ void submit_each_copy(Sync& sync, F&& func, cc::span<T> vals, cc::allocator* scr
 /// submits tasks calling a lambda "void f(unsigned start, unsigned end)" for multiple batches over the range 0 to n
 /// num_batches_max: maximum amount of batches to partition the range into
 template <class F>
-uint32_t submit_batched(Sync& sync, F&& func, uint32_t n, uint32_t num_batches_max = td::getNumLogicalCPUCores() * 4, cc::allocator* scratch_alloc = cc::system_allocator)
+[[deprecated("use td::submitBatched()")]] uint32_t submit_batched(
+    Sync& sync, F&& func, uint32_t n, uint32_t num_batches_max = td::getNumLogicalCPUCores() * 4, cc::allocator* scratch_alloc = cc::system_allocator)
 {
     static_assert(std::is_invocable_v<F, uint32_t, uint32_t>, "function must be invocable with batch start and end argument");
 
@@ -127,7 +128,8 @@ uint32_t submit_batched(Sync& sync, F&& func, uint32_t n, uint32_t num_batches_m
 /// submits tasks calling a lambda "void f(unsigned start, unsigned end, unsigned batch_i)" for multiple batches over the range 0 to n
 /// num_batches_max: maximum amount of batches to partition the range into
 template <class F>
-uint32_t submit_batched_n(Sync& sync, F&& func, uint32_t num_elements, uint32_t max_num_batches = td::getNumLogicalCPUCores() * 4, cc::allocator* scratch_alloc = cc::system_allocator)
+[[deprecated("renamed to td::submitBatched()")]] uint32_t submit_batched_n(
+    Sync& sync, F&& func, uint32_t num_elements, uint32_t max_num_batches = td::getNumLogicalCPUCores() * 4, cc::allocator* scratch_alloc = cc::system_allocator)
 {
     CC_ASSERT(is_scheduler_alive() && "scheduler not alive");
     if (!sync.handle.isValid())
@@ -140,7 +142,7 @@ uint32_t submit_batched_n(Sync& sync, F&& func, uint32_t num_elements, uint32_t 
 
 // Lambda - sync return variant
 template <class F>
-[[nodiscard]] Sync submit(F&& fun)
+[[deprecated]] [[nodiscard]] Sync submit(F&& fun)
 {
     static_assert(std::is_invocable_r_v<void, F>, "function must be invocable without arguments");
 
@@ -152,7 +154,7 @@ template <class F>
 
 // Pointer to member function with arguments - sync return variant
 template <class F, class FObj, class... Args, cc::enable_if<std::is_member_function_pointer_v<F>> = true>
-[[nodiscard]] Sync submit(F func, FObj& inst, Args&&... args)
+[[deprecated]] [[nodiscard]] Sync submit(F func, FObj& inst, Args&&... args)
 {
     static_assert(std::is_invocable_r_v<void, F, FObj, Args...>, "function must be invocable with the given args");
 
@@ -172,7 +174,7 @@ template <class F, class FObj, class... Args, cc::enable_if<std::is_member_funct
 
 // Lambda with arguments - sync return variant
 template <class F, class... Args, cc::enable_if<std::is_invocable_v<F, Args...> && !std::is_member_function_pointer_v<F>> = true>
-[[nodiscard]] Sync submit(F&& fun, Args&&... args)
+[[deprecated]] [[nodiscard]] Sync submit(F&& fun, Args&&... args)
 {
     static_assert(std::is_invocable_r_v<void, F, Args...>, "function must be invocable with the given args");
     static_assert(!std::is_member_function_pointer_v<F>, "function must not be a function pointer");
@@ -195,7 +197,7 @@ template <class F, class... Args, cc::enable_if<std::is_invocable_v<F, Args...> 
 // Sync return variants
 
 template <class F>
-[[nodiscard]] Sync submit_n(F&& func, unsigned n)
+[[deprecated]] [[nodiscard]] Sync submit_n(F&& func, unsigned n)
 {
     static_assert(std::is_invocable_v<F, unsigned>, "function must be invocable with index argument");
     static_assert(std::is_same_v<std::invoke_result_t<F, unsigned>, void>, "return must be void");
@@ -205,7 +207,7 @@ template <class F>
 }
 
 template <class T, class F>
-[[nodiscard]] Sync submit_each_ref(F&& func, cc::span<T> vals)
+[[deprecated]] [[nodiscard]] Sync submit_each_ref(F&& func, cc::span<T> vals)
 {
     static_assert(std::is_invocable_v<F, T&>, "function must be invocable with element reference");
     static_assert(std::is_same_v<std::invoke_result_t<F, T&>, void>, "return must be void");
@@ -215,7 +217,7 @@ template <class T, class F>
 }
 
 template <class T, class F>
-[[nodiscard]] Sync submit_each_copy(F&& func, cc::span<T> vals)
+[[deprecated]] [[nodiscard]] Sync submit_each_copy(F&& func, cc::span<T> vals)
 {
     static_assert(std::is_invocable_v<F, T>, "function must be invocable with element value");
     static_assert(std::is_same_v<std::invoke_result_t<F, T>, void>, "return must be void");
@@ -225,7 +227,7 @@ template <class T, class F>
 }
 
 template <class F>
-[[nodiscard]] Sync submit_batched(F&& func, unsigned n, unsigned num_batches_max = td::getNumLogicalCPUCores() * 4)
+[[deprecated]] [[nodiscard]] Sync submit_batched(F&& func, unsigned n, unsigned num_batches_max = td::getNumLogicalCPUCores() * 4)
 {
     static_assert(std::is_invocable_v<F, unsigned, unsigned>, "function must be invocable with batch start and end argument");
     static_assert(std::is_same_v<std::invoke_result_t<F, unsigned, unsigned>, void>, "return must be void");
@@ -235,7 +237,7 @@ template <class F>
 }
 
 template <class F>
-[[nodiscard]] Sync submit_batched_n(F&& func, unsigned n, unsigned num_batches_max = td::getNumLogicalCPUCores() * 4)
+[[deprecated]] [[nodiscard]] Sync submit_batched_n(F&& func, unsigned n, unsigned num_batches_max = td::getNumLogicalCPUCores() * 4)
 {
     static_assert(std::is_invocable_v<F, unsigned, unsigned, unsigned>, "function must be invocable with batch start, end, and index argument");
     static_assert(std::is_same_v<std::invoke_result_t<F, unsigned, unsigned, unsigned>, void>, "return must be void");

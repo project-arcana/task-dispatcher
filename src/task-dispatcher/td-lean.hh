@@ -10,8 +10,10 @@
 
 #include <task-dispatcher/Scheduler.hh>
 #include <task-dispatcher/SchedulerConfig.hh>
+#include <task-dispatcher/Sync.hh>
 #include <task-dispatcher/container/Task.hh>
-#include <task-dispatcher/sync.hh>
+
+#include <task-dispatcher/LambdaSubmission.hh>
 
 // td-lean.hh
 // basic task-dispatcher API
@@ -126,7 +128,8 @@ inline int32_t single_wait_for(Sync& sync, bool pinned)
     // free the sync if it reached 0
     if (td::releaseCounterIfOnZero(sync.handle))
     {
-        // mark as uninitialized
+        // racing on this call is fine, only a single thread receives true here
+        // mark the sync as uninitialized
         sync.handle.invalidate();
     }
 
@@ -195,22 +198,14 @@ template <class... STs>
 }
 
 template <class F, cc::enable_if<std::is_invocable_r_v<void, F>> = true>
-void submit_on_counter(CounterHandle handle, F&& func)
+[[deprecated("renamed to td::submitLambda()")]] void submit_on_counter(CounterHandle handle, F&& func)
 {
-    static_assert(std::is_invocable_v<F>, "function must be invocable without arguments");
-
-    Task dispatch;
-
-    if constexpr (std::is_class_v<F>)
-        dispatch.initWithLambda(cc::forward<F>(func));
-    else
-        dispatch.initWithLambda([=] { func(); });
-
-    submitTasks(handle, cc::span{dispatch});
+    td::submitLambda<F>(handle, cc::forward<F>(func));
 }
 
 template <class F>
-uint32_t submit_batched_on_counter(CounterHandle handle, F&& func, uint32_t num_elements, uint32_t max_num_batches, cc::allocator* scratch = cc::system_allocator)
+[[deprecated("renamed to td::submitBatched()")]] uint32_t submit_batched_on_counter(
+    CounterHandle handle, F&& func, uint32_t num_elements, uint32_t max_num_batches, cc::allocator* scratch = cc::system_allocator)
 {
     static_assert(std::is_invocable_v<F, uint32_t, uint32_t, uint32_t>, "function must be invocable with element start, end, and index argument");
 

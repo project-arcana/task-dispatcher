@@ -22,6 +22,11 @@ struct CounterHandle
 inline constexpr CounterHandle NullCounterHandle = CounterHandle{};
 
 // An automatically managed CounterHandle
+// TODO(JK): make compatible with existing overloads
+// idea: l-value qualified conversion operator to counter handle doing the optional check
+// then overload the wait function on Sync& explicitly and run the optional free
+// make sure to delete const& overloads to avoid errors there
+// might even want to add move ctor and assert in the dtor to make sure that someone waited on the handle and cleared it
 struct Sync
 {
     CounterHandle handle = {};
