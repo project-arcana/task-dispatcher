@@ -8,6 +8,7 @@
 #include <clean-core/forward.hh>
 #include <clean-core/utility.hh>
 
+#include <task-dispatcher/CounterHandle.hh>
 #include <task-dispatcher/Scheduler.hh>
 #include <task-dispatcher/container/Task.hh>
 
@@ -33,13 +34,13 @@ void submitNumbered(CounterHandle counter, F&& func, uint32_t numElements, cc::a
     }
 
     td::submitTasks(counter, cc::span{tasks, numElements});
-    scratch->delete_array_sized(tasks);
+    scratch->delete_array_sized(tasks, numBatches);
 }
 
 // submits tasks calling a lambda "void f(uint start, uint end, uint batchIdx)" for evenly sized batches from 0 to num - 1
 // maxNumBatches: maximum amount of batches to partition the range into
 template <class F>
-uint32_t submitBatched(CounterHandle handle, F&& func, uint32_t numElements, uint32_t maxNumBatches, cc::allocator* scratch)
+uint32_t submitBatched(CounterHandle counter, F&& func, uint32_t numElements, uint32_t maxNumBatches, cc::allocator* scratch)
 {
     static_assert(std::is_invocable_v<F, uint32_t, uint32_t, uint32_t>, "function must be invocable with element start, end, and index argument");
 
@@ -57,7 +58,7 @@ uint32_t submitBatched(CounterHandle handle, F&& func, uint32_t numElements, uin
     }
 
     td::submitTasks(counter, cc::span{tasks, numBatches});
-    scratch->delete_array_sized(tasks);
+    scratch->delete_array_sized(tasks, numBatches);
     return numBatches;
 }
 

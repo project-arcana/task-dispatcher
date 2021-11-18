@@ -14,7 +14,7 @@ template <class T, uint32_t N>
 struct VersionRing;
 
 struct CounterHandle;
-struct Sync;
+struct AutoCounter;
 struct Task;
 struct SchedulerConfig;
 }

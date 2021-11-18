@@ -5,6 +5,7 @@
 #include <clean-core/enable_if.hh>
 #include <clean-core/forward.hh>
 
+#include <task-dispatcher/CounterHandle.hh>
 #include <task-dispatcher/Scheduler.hh>
 #include <task-dispatcher/container/Task.hh>
 

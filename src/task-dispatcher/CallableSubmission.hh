@@ -8,6 +8,7 @@
 #include <clean-core/move.hh>
 #include <clean-core/tuple.hh>
 
+#include <task-dispatcher/CounterHandle.hh>
 #include <task-dispatcher/Scheduler.hh>
 #include <task-dispatcher/container/Task.hh>
 
@@ -47,7 +48,7 @@ void submitCallable(CounterHandle counter, F&& func, Args&&... args)
 // submit a task based on a member function, with arguments passed to it
 // arguments are moved into the task capture immediately
 template <class F, class FObj, class... Args, cc::enable_if<std::is_member_function_pointer_v<F>> = true>
-void submitMethod(CounterHandle counter, F func, FObj* pInst, Args&&... args)
+void submitMethod(CounterHandle counter, FObj* pInst, F func, Args&&... args)
 {
     static_assert(std::is_invocable_v<F, FObj, Args...>, "function must be invocable with the given args");
     static_assert(std::is_same_v<std::invoke_result_t<F, FObj, Args...>, void>, "return must be void");

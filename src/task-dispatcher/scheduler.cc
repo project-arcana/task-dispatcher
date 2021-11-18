@@ -29,7 +29,6 @@
 #include <task-dispatcher/native/fiber.hh>
 #include <task-dispatcher/native/thread.hh>
 #include <task-dispatcher/native/util.hh>
-#include <task-dispatcher/sync.hh>
 
 
 // new waiting mechanism
@@ -95,10 +94,16 @@ enum ESpecialCounterValues : int32_t
 
 using resumable_fiber_mpsc_queue = td::FIFOQueue<fiber_index_t, 32>;
 
+struct WaitingElement
+{
+    fiber_index_t fiber = invalid_fiber;
+    counter_index_t counter = invalid_counter;
+};
+
 struct WaitingFiberVector
 {
     std::atomic_uint32_t numElements;
-    fiber_index_t* elements;
+    WaitingElement* elements;
 };
 
 struct atomic_counter_t
@@ -240,7 +245,7 @@ struct Scheduler
     bool getNextTask(Task& task);
     bool tryResumeFiber(fiber_index_t fiber);
 
-    bool counterAddWaitingFiber(atomic_counter_t& counter, fiber_index_t fiber_index, thread_index_t pinned_thread_index, int counter_target, int& out_counter_val);
+    bool counterAddWaitingFiber(atomic_counter_t& counter, WaitingElement newElement, thread_index_t pinned_thread_index, int counter_target, int& out_counter_val);
     void counterCheckWaitingFibers(atomic_counter_t& counter, int value);
 
     int counterIncrement(atomic_counter_t& counter, int amount = 1);
@@ -362,7 +367,7 @@ static void entrypointFiber(void* arg_void)
                 // (not at all OS scheduler related, locks cores at 100%)
                 _mm_pause();
 #else // !TD_ALWAYS_SPINWAIT
-                // only perform OS wait if backoff is at maximum and this thread is not waiting
+      // only perform OS wait if backoff is at maximum and this thread is not waiting
                 if (backoff_num_pauses == lc_max_backoff_pauses && !gTLS.is_thread_waiting)
                 {
                     // reached max backoff, wait for global event
@@ -375,7 +380,7 @@ static void entrypointFiber(void* arg_void)
                     {
                         fprintf(stderr, "[td] Scheduler warning: Work event wait timed out\n");
                     }
-#else // !TD_WARN_ON_WAITING_TIMEOUTS
+#else  // !TD_WARN_ON_WAITING_TIMEOUTS
                     (void)signalled;
 #endif // TD_WARN_ON_WAITING_TIMEOUTS
                 }
@@ -563,7 +568,7 @@ bool td::Scheduler::tryResumeFiber(fiber_index_t fiber)
     }
 }
 
-bool td::Scheduler::counterAddWaitingFiber(atomic_counter_t& counter, fiber_index_t fiber_index, thread_index_t pinned_thread_index, int counter_target, int& out_counter_val)
+bool td::Scheduler::counterAddWaitingFiber(atomic_counter_t& counter, WaitingElement newElement, thread_index_t pinned_thread_index, int counter_target, int& out_counter_val)
 {
     CC_ASSERT(counter_target == 0 && "Non-zero waiting targets unimplemented");
 
@@ -581,12 +586,22 @@ bool td::Scheduler::counterAddWaitingFiber(atomic_counter_t& counter, fiber_inde
         return true;
     }
 
-    thread_index_t const prevPinnedThreadIdx = mFibers[fiber_index].pinned_thread_index.exchange(pinned_thread_index);
-    CC_ASSERT(prevPinnedThreadIdx == invalid_thread && "unexpected / race");
+    if (newElement.fiber != invalid_fiber)
+    {
+        // a new waiting fiber
 
-    uint32_t const newFiberIdx = counter.waitingVector.numElements.fetch_add(1);
-    CC_ASSERT(newFiberIdx < mConfig.maxNumWaitingFibersPerCounter && "Too many fibers waiting on a single counter");
-    counter.waitingVector.elements[newFiberIdx] = fiber_index;
+        thread_index_t const prevPinnedThreadIdx = mFibers[newElement.fiber].pinned_thread_index.exchange(pinned_thread_index);
+        CC_ASSERT(prevPinnedThreadIdx == invalid_thread && "unexpected / race");
+    }
+    else
+    {
+        // a new waiting counter, nothing special to do
+    }
+
+    uint32_t const newElemIdx = counter.waitingVector.numElements.fetch_add(1);
+    CC_ASSERT(newElemIdx < mConfig.maxNumWaitingFibersPerCounter && "Too many fibers waiting on a single counter");
+
+    counter.waitingVector.elements[newElemIdx] = newElement;
 
     return false;
 
@@ -642,7 +657,7 @@ void td::Scheduler::counterCheckWaitingFibers(atomic_counter_t& counter, int val
 
 #if TD_NEW_WAITING_FIBER_MECHANISM
 
-    fiber_index_t* pReceivedFibers = nullptr;
+    WaitingElement* pReceivedWaitingElems = nullptr;
     uint32_t numReceivedFibers = 0;
 
     {
@@ -654,33 +669,50 @@ void td::Scheduler::counterCheckWaitingFibers(atomic_counter_t& counter, int val
         numReceivedFibers = prevVectorSize;
         if (numReceivedFibers > 0)
         {
-            pReceivedFibers = reinterpret_cast<fiber_index_t*>(alloca(sizeof(pReceivedFibers[0]) * prevVectorSize));
-            memcpy(pReceivedFibers, counter.waitingVector.elements, numReceivedFibers * sizeof(pReceivedFibers[0]));
+            pReceivedWaitingElems = reinterpret_cast<WaitingElement*>(alloca(sizeof(pReceivedWaitingElems[0]) * prevVectorSize));
+            memcpy(pReceivedWaitingElems, counter.waitingVector.elements, numReceivedFibers * sizeof(pReceivedWaitingElems[0]));
         }
     }
 
     for (auto i = 0u; i < numReceivedFibers; ++i)
     {
-        fiber_index_t const fiberIdx = pReceivedFibers[i];
+        WaitingElement const waitingElem = pReceivedWaitingElems[i];
 
-        thread_index_t const pinnedThreadIdx = mFibers[fiberIdx].pinned_thread_index.exchange(invalid_thread);
-
-        if (pinnedThreadIdx == invalid_thread)
+        if (waitingElem.fiber != invalid_fiber)
         {
-            // The waiting fiber is not pinned to any thread, store it in the global resumable fibers
-            bool success = mResumableFibers.enqueue(fiberIdx);
+            // this element represents a waiting fiber
+            auto const fiberIdx = waitingElem.fiber;
 
-            // This should never fail, the container is large enough for all fibers in the system
-            CC_ASSERT(success);
+            thread_index_t const pinnedThreadIdx = mFibers[fiberIdx].pinned_thread_index.exchange(invalid_thread);
+
+            if (pinnedThreadIdx == invalid_thread)
+            {
+                // The waiting fiber is not pinned to any thread, store it in the global resumable fibers
+                bool success = mResumableFibers.enqueue(fiberIdx);
+
+                // This should never fail, the container is large enough for all fibers in the system
+                CC_ASSERT(success);
+            }
+            else
+            {
+                // The waiting fiber is pinned to a certain thread, store it there
+                auto& pinned_thread = mThreads[pinnedThreadIdx];
+
+                auto lg = cc::lock_guard(pinned_thread.pinned_resumable_fibers_lock);
+                pinned_thread.pinned_resumable_fibers.enqueue(fiberIdx);
+            }
         }
         else
         {
-            // The waiting fiber is pinned to a certain thread, store it there
-            auto& pinned_thread = mThreads[pinnedThreadIdx];
+            // this element represents a waiting counter, caused by createCounterDependency
+            CC_ASSERT(waitingElem.counter != invalid_counter && "unexpected entry in waiting elements");
 
+            // decrement the counter
+            atomic_counter_t& counter = mCounters[waitingElem.counter];
 
-            auto lg = cc::lock_guard(pinned_thread.pinned_resumable_fibers_lock);
-            pinned_thread.pinned_resumable_fibers.enqueue(fiberIdx);
+            // NOTE(JK): counterIncrement can in turn call this function!
+            // this might be a problem wrt. alloca, however no deadlocks possible
+            counterIncrement(counter, -1);
         }
     }
 
@@ -760,7 +792,7 @@ int td::Scheduler::counterIncrement(atomic_counter_t& counter, int amount)
 
     if (new_val == 0)
     {
-        // amount != 0, meaning this is the only thread with this result
+        // amount must be != 0, meaning this is the only thread with this result
         counterCheckWaitingFibers(counter, 0);
     }
 
@@ -773,7 +805,7 @@ void td::Scheduler::start(td::Task const& main_task)
     for (atomic_counter_t& counter : mCounters)
     {
         counter.waitingVector.numElements.store(0);
-        counter.waitingVector.elements = mConfig.staticAlloc->new_array_sized<fiber_index_t>(mConfig.maxNumWaitingFibersPerCounter);
+        counter.waitingVector.elements = mConfig.staticAlloc->new_array_sized<WaitingElement>(mConfig.maxNumWaitingFibersPerCounter);
     }
 #endif
 
@@ -1028,8 +1060,8 @@ bool td::releaseCounterIfOnZero(CounterHandle c)
     if (!sched->mCounters[freed_counter].count.compare_exchange_strong(contained, ECounterVal_Released))
     {
         // current value must be either ECounterVal_Released, meaning someone else won the race on this function,
-        // or >= 0 because the counter didn't reach zero yet
-        CC_ASSERT(contained >= 0 || contained == ECounterVal_Released && "Counter contains negative value");
+        // or > 0 because the counter didn't reach zero yet
+        CC_ASSERT(contained > 0 || contained == ECounterVal_Released && "Counter contains negative value");
         return false;
     }
 
@@ -1080,7 +1112,11 @@ int32_t td::waitForCounter(CounterHandle c, bool pinned)
     gTLS.is_thread_waiting = true;
 
     int counter_value_before_wait = -1;
-    if (sched->counterAddWaitingFiber(sched->mCounters[counter_index], gTLS.current_fiber_index, pinned ? gTLS.thread_index : invalid_thread, 0, counter_value_before_wait))
+
+    WaitingElement waitElem = {};
+    waitElem.fiber = gTLS.current_fiber_index;
+
+    if (sched->counterAddWaitingFiber(sched->mCounters[counter_index], waitElem, pinned ? gTLS.thread_index : invalid_thread, 0, counter_value_before_wait))
     {
         // Already done
         //        KW_LOG_DIAG("[wait] Wait for counter " << int(counter_index) << " is over early, resuming immediately");
@@ -1104,6 +1140,7 @@ int32_t td::incrementCounter(CounterHandle c, uint32_t amount)
 {
     Scheduler* const sched = gSchedulerOnThread;
     CC_ASSERT(sched != nullptr && "Called from outside scheduler, use td::launchScheduler() first");
+    CC_ASSERT(c.isValid() && "td::incrementCounter() called with invalid counter handle");
 
     auto const counter_index = sched->mCounterHandles.get(c._value).counterIndex;
     return sched->counterIncrement(sched->mCounters[counter_index], (int32_t)amount);
@@ -1113,9 +1150,37 @@ int32_t td::decrementCounter(CounterHandle c, uint32_t amount)
 {
     Scheduler* const sched = gSchedulerOnThread;
     CC_ASSERT(sched != nullptr && "Called from outside scheduler, use td::launchScheduler() first");
+    CC_ASSERT(c.isValid() && "td::decrementCounter() called with invalid counter handle");
 
     auto const counter_index = sched->mCounterHandles.get(c._value).counterIndex;
     return sched->counterIncrement(sched->mCounters[counter_index], (int32_t)amount * -1);
+}
+
+int32_t td::createCounterDependency(CounterHandle counterToModify, CounterHandle counterToDependUpon)
+{
+    Scheduler* const sched = gSchedulerOnThread;
+    CC_ASSERT(sched != nullptr && "Called from outside scheduler, use td::launchScheduler() first");
+    CC_ASSERT(counterToModify.isValid() && counterToDependUpon.isValid() && "td::createCounterDependency() called with invalid counter handle");
+
+
+    // immediately increment counterToModify by one
+    auto const counterToModifyIdx = sched->mCounterHandles.get(counterToModify._value).counterIndex;
+    sched->counterIncrement(sched->mCounters[counterToModifyIdx], 1);
+
+    // enter counterToModify as a waiting element into counterToDependUpon
+    auto const counterToDependUponIdx = sched->mCounterHandles.get(counterToDependUpon._value).counterIndex;
+    int counterToDependUponValueBeforeWait = -1;
+
+    WaitingElement waitElem = {};
+    waitElem.counter = counterToModifyIdx;
+
+    if (sched->counterAddWaitingFiber(sched->mCounters[counterToDependUponIdx], waitElem, invalid_thread, 0, counterToDependUponValueBeforeWait))
+    {
+        // immediately done, decrement counterToModify again
+        sched->counterIncrement(sched->mCounters[counterToModifyIdx], -1);
+    }
+
+    return counterToDependUponValueBeforeWait;
 }
 
 uint32_t td::getNumThreadsInScheduler()
