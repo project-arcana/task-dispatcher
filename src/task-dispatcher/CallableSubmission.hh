@@ -51,6 +51,8 @@ void submitCallable(CounterHandle counter, F&& func, Args&&... args)
 template <class F, class FObj, class... Args, cc::enable_if<std::is_member_function_pointer_v<F>> = true>
 void submitMethod(CounterHandle counter, FObj* pInst, F pMemberFunc, Args&&... args)
 {
+    // NOTE: the SFINAE and static asserts here wouldn't be necessary if we could just use void (FObj::*pMemberFunc)(Args...)
+    // as the type for the member function ptr but that creates ambiguity about 'Args...'
     static_assert(std::is_invocable_v<F, FObj, Args...>, "function must be invocable with the given args");
     static_assert(std::is_same_v<std::invoke_result_t<F, FObj, Args...>, void>, "return must be void");
 
