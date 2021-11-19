@@ -49,21 +49,21 @@ void submitCallable(CounterHandle counter, F&& func, Args&&... args)
 // submit a task based on a member function, with arguments passed to it
 // arguments are moved into the task capture immediately
 template <class F, class FObj, class... Args, cc::enable_if<std::is_member_function_pointer_v<F>> = true>
-void submitMethod(CounterHandle counter, FObj* pInst, F func, Args&&... args)
+void submitMethod(CounterHandle counter, FObj* pInst, F pMemberFunc, Args&&... args)
 {
     static_assert(std::is_invocable_v<F, FObj, Args...>, "function must be invocable with the given args");
     static_assert(std::is_same_v<std::invoke_result_t<F, FObj, Args...>, void>, "return must be void");
 
     // A lambda calling pInst->func(args...), moving the arguments into the capture (instead of copying)
     Task dispatch(
-        [func, pInst, tup = cc::tuple(cc::move(args)...)]
+        [pMemberFunc, pInst, tup = cc::tuple(cc::move(args)...)]
         {
             // "apply" the argument tuple to go back to a parameter pack
             cc::apply(
-                [&func, pInst](auto&&... args)
+                [&pMemberFunc, pInst](auto&&... args)
                 {
                     // actually call the method with expanded arguments
-                    (pInst->*func)(decltype(args)(args)...);
+                    (pInst->*pMemberFunc)(decltype(args)(args)...);
                 },
                 tup);
         });

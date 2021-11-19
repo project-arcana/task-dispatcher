@@ -28,7 +28,7 @@ void submitNumbered(CounterHandle counter, F&& func, uint32_t numElements, cc::a
 
     td::Task* tasks = scratch->new_array_sized<td::Task>(numElements);
 
-    for (auto i = 0u; i < numElements; ++i)
+    for (uint32_t i = 0u; i < numElements; ++i)
     {
         tasks[i].initWithLambda([=] { func(i); });
     }
