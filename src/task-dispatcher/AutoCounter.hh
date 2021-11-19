@@ -11,22 +11,25 @@ namespace td
 // acquires a counter on first usage and releases it when waiting
 struct TD_API AutoCounter
 {
-    CounterHandle handle = {};
-
-    operator CounterHandle() &;
-    operator CounterHandle() && = delete;
-
     AutoCounter() = default;
 
     AutoCounter(AutoCounter&& rhs) : handle(rhs.handle) { rhs.handle.invalidate(); }
     AutoCounter& operator=(AutoCounter&& rhs)
     {
-        CC_ASSERT(!handle.isValid() && "Must call td::waitForCounter() on AutoCounter before letting it go out of scope");
+        CC_ASSERT(!handle.isValid() && "Must call td::waitForCounter() on AutoCounter before dropping it");
         handle = rhs.handle;
         rhs.handle.invalidate();
         return *this;
     }
 
-    ~AutoCounter() { CC_ASSERT(!handle.isValid() && "Must call td::waitForCounter() on AutoCounter before letting it go out of scope"); }
+    ~AutoCounter() { CC_ASSERT(!handle.isValid() && "Must call td::waitForCounter() on AutoCounter before dropping it"); }
+
+    operator CounterHandle() &;
+
+    [[deprecated("For less restricted usage, use raw CounterHandle")]] AutoCounter(AutoCounter const&) = delete;
+    [[deprecated("For less restricted usage, use raw CounterHandle")]] AutoCounter& operator=(AutoCounter const&) = delete;
+    [[deprecated("Would immediately drop AutoCounter")]] operator CounterHandle() && = delete;
+
+    CounterHandle handle = {};
 };
 }

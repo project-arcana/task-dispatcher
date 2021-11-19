@@ -28,13 +28,13 @@ void submitNumbered(CounterHandle counter, F&& func, uint32_t numElements, cc::a
 
     td::Task* tasks = scratch->new_array_sized<td::Task>(numElements);
 
-    for (auto i = 0u; i < n; ++i)
+    for (auto i = 0u; i < numElements; ++i)
     {
         tasks[i].initWithLambda([=] { func(i); });
     }
 
     td::submitTasks(counter, cc::span{tasks, numElements});
-    scratch->delete_array_sized(tasks, numBatches);
+    scratch->delete_array_sized(tasks, numElements);
 }
 
 // submits tasks calling a lambda "void f(uint start, uint end, uint batchIdx)" for evenly sized batches from 0 to num - 1

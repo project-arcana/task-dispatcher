@@ -3,6 +3,7 @@
 #include <type_traits> // for is_invocable, is_class, is_member_function_pointer_v
 #include <utility>     // for tuple_size
 
+#include <clean-core/apply.hh>
 #include <clean-core/enable_if.hh>
 #include <clean-core/forward.hh>
 #include <clean-core/move.hh>

@@ -3,6 +3,7 @@
 #include <type_traits>
 
 #include <clean-core/enable_if.hh>
+#include <clean-core/span.hh>
 #include <clean-core/forward.hh>
 
 #include <task-dispatcher/CounterHandle.hh>
