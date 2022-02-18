@@ -49,6 +49,10 @@ TD_API int32_t decrementCounter(CounterHandle counter, uint32_t amount = 1);
 // counterToModify is incremented by one, and decremented again once counterToDependUpon reaches zero
 TD_API int32_t createCounterDependency(CounterHandle counterToModify, CounterHandle counterToDependUpon);
 
+// returns the approximate current counter value
+// NOTE: value can be immediately out of date, should not be used to make threading decisions
+TD_API int32_t getApproximateCounterValue(CounterHandle counter);
+
 //
 // Info
 //

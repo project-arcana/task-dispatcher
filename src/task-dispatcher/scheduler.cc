@@ -1183,6 +1183,16 @@ int32_t td::createCounterDependency(CounterHandle counterToModify, CounterHandle
     return counterToDependUponValueBeforeWait;
 }
 
+int32_t td::getApproximateCounterValue(CounterHandle c)
+{
+    Scheduler* const sched = gSchedulerOnThread;
+    CC_ASSERT(sched != nullptr && "Called from outside scheduler, use td::launchScheduler() first");
+    CC_ASSERT(c.isValid() && "td::getApproximateCounterValue() called with invalid counter handle");
+
+    auto const counter_index = sched->mCounterHandles.get(c._value).counterIndex;
+    return sched->mCounters[counter_index].count.load(std::memory_order_relaxed);
+}
+
 uint32_t td::getNumThreadsInScheduler()
 {
     Scheduler* const sched = gSchedulerOnThread;
