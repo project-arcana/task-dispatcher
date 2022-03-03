@@ -39,11 +39,18 @@ TD_API int32_t waitForCounter(CounterHandle counter, bool pinned = true);
 // returns the new counter value
 TD_API int32_t incrementCounter(CounterHandle counter, uint32_t amount = 1);
 
-// manually decrement a sync object, potentially causing waits on it to resolve
+// manually decrement a counter, potentially causing waits on it to resolve
 // normally, a sync is decremented once a task submitted on it is finished
 // WARNING: without previous calls to increment_sync, this will cause wait-calls to resolve before all tasks have finished
 // returns the new counter value
 TD_API int32_t decrementCounter(CounterHandle counter, uint32_t amount = 1);
+
+// manually apply a compare-and-swap operation on a counter
+// potentially causing waits on it to resolve like decrementCounter
+// or preventing waits to resolve like incrementCounter
+// returns the original value of the counter
+// after this call, the counter will have the value of 'exchange' if the original value is equal to 'comparand'
+TD_API int32_t compareAndSwapCounter(CounterHandle counter, int32_t comparand, int32_t exchange);
 
 // creates a manual dependency between two counters
 // counterToModify is incremented by one, and decremented again once counterToDependUpon reaches zero

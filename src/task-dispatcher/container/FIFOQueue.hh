@@ -2,22 +2,29 @@
 
 #include <stdint.h>
 
+#include <clean-core/alloc_array.hh>
 #include <clean-core/assert.hh>
 
 namespace td
 {
 // This is not synchronized at all, TODO: Replace with Yukov or similar
 // what we would need here is an MPSC queue
-template <class T, uint32_t N>
+template <class T>
 struct FIFOQueue
 {
-    static_assert(N > 0);
-
 public:
     FIFOQueue() = default;
 
+    void initialize(size_t size, cc::allocator* alloc)
+    {
+        CC_ASSERT(mData.empty() && size > 0 && alloc);
+        mData.reset(alloc, size);
+    }
+
     bool dequeue(T& out_ref)
     {
+        CC_ASSERT(!mData.empty());
+
         if (empty())
             return false;
 
@@ -32,9 +39,7 @@ public:
         else
         {
             // Increment tail
-            ++mTail;
-            if (mTail >= N)
-                mTail -= N;
+            mTail = cc::wrapped_increment(mTail, int(mData.size()));
         }
 
         return true;
@@ -42,15 +47,15 @@ public:
 
     void enqueue(T const& val)
     {
+        CC_ASSERT(!mData.empty());
+
         CC_ASSERT(!full() && "FIFOQueue Full");
 
         if (empty())
             mTail = 0;
 
         // Increment head
-        ++mHead;
-        if (mHead >= N)
-            mHead -= N;
+        mHead = cc::wrapped_increment(mHead, int(mData.size()));
 
         mData[mHead] = val;
     }
@@ -59,9 +64,7 @@ public:
 
     bool full() const
     {
-        int next_head = mHead + 1;
-        if (next_head >= N)
-            next_head -= N;
+        int next_head = cc::wrapped_increment(mHead, int(mData.size()));
 
         return next_head == mTail;
     }
@@ -69,7 +72,8 @@ public:
 private:
     int mHead = -1;
     int mTail = -1;
-    T mData[N] = {};
+
+    cc::alloc_array<T> mData;
 
     FIFOQueue(FIFOQueue const& other) = delete;
     FIFOQueue(FIFOQueue&& other) noexcept = delete;

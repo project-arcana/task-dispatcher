@@ -7,7 +7,7 @@ namespace td
 template <class T>
 struct MPMCQueue;
 
-template <class T, uint32_t N>
+template <class T>
 struct FIFOQueue;
 
 template <class T, uint32_t N>
