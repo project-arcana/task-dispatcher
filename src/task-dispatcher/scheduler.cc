@@ -12,7 +12,7 @@
 #include <clean-core/atomic_linked_pool.hh>
 #include <clean-core/macros.hh>
 #include <clean-core/spin_lock.hh>
-#include <clean-core/threadsafe_allocators.hh>
+#include <clean-core/lock_guard.hh>
 #include <clean-core/utility.hh>
 #include <clean-core/vector.hh>
 
