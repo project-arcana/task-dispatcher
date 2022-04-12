@@ -39,6 +39,7 @@ void submitNumbered(CounterHandle counter, F&& func, uint32_t numElements, cc::a
 
 // submits tasks calling a lambda "void f(uint start, uint end, uint batchIdx)" for evenly sized batches from 0 to num - 1
 // maxNumBatches: maximum amount of batches to partition the range into
+// returns amount of batches
 template <class F>
 uint32_t submitBatched(CounterHandle counter, F&& func, uint32_t numElements, uint32_t maxNumBatches, cc::allocator* scratch)
 {
