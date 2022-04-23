@@ -10,7 +10,9 @@
 
 namespace td
 {
-struct Sync;
+struct Sync
+{
+};
 
 template <class F, class... Args>
 [[deprecated("renamed to td::submitCallable()")]] void submit(Sync& s, F&& fun, Args&&... args) = delete;

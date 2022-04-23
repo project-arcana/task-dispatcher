@@ -49,7 +49,7 @@ template <class F>
 void launchSinglethreaded(F&& func)
 {
     SchedulerConfig config;
-    config.num_threads = 1;
+    config.numThreads = 1;
     return launch(config, cc::forward<F>(func));
 }
 
