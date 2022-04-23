@@ -12,7 +12,7 @@
 #include <clean-core/atomic_linked_pool.hh>
 #include <clean-core/macros.hh>
 #include <clean-core/spin_lock.hh>
-#include <clean-core/threadsafe_allocators.hh>
+#include <clean-core/lock_guard.hh>
 #include <clean-core/utility.hh>
 #include <clean-core/vector.hh>
 
@@ -25,7 +25,7 @@
 #include <task-dispatcher/container/ChaseLevQueue.hh>
 #include <task-dispatcher/container/FIFOQueue.hh>
 #include <task-dispatcher/container/MPMCQueue.hh>
-#include <task-dispatcher/container/task.hh>
+#include <task-dispatcher/container/Task.hh>
 #include <task-dispatcher/native/fiber.hh>
 #include <task-dispatcher/native/thread.hh>
 #include <task-dispatcher/native/util.hh>
@@ -92,7 +92,7 @@ enum ESpecialCounterValues : int32_t
     ECounterVal_Released = -99
 };
 
-using resumable_fiber_mpsc_queue = td::FIFOQueue<fiber_index_t, 32>;
+using resumable_fiber_mpsc_queue = td::FIFOQueue<fiber_index_t>;
 
 struct WaitingElement
 {
@@ -117,7 +117,7 @@ struct atomic_counter_t
     };
 
     // The value of this counter
-    std::atomic<int> count;
+    std::atomic<int32_t> count;
 
 #if TD_NEW_WAITING_FIBER_MECHANISM
     cc::spin_lock spinLockWaitingVector;
@@ -248,7 +248,9 @@ struct Scheduler
     bool counterAddWaitingFiber(atomic_counter_t& counter, WaitingElement newElement, thread_index_t pinned_thread_index, int counter_target, int& out_counter_val);
     void counterCheckWaitingFibers(atomic_counter_t& counter, int value);
 
-    int counterIncrement(atomic_counter_t& counter, int amount = 1);
+    int32_t counterIncrement(atomic_counter_t& counter, int32_t amount = 1);
+
+    int32_t counterCompareAndSwap(atomic_counter_t& counter, int32_t comparand, int32_t exchange);
 
     bool enqueueTasks(td::Task* tasks, uint32_t num_tasks, CounterHandle counter);
 };
@@ -327,7 +329,7 @@ TD_NATIVE_THREAD_FUNC_DECL entrypointWorkerThread(void* arg_void)
 
 static void entrypointFiber(void* arg_void)
 {
-    td::Scheduler* const scheduler = static_cast<class td::Scheduler*>(arg_void);
+    td::Scheduler* const scheduler = static_cast<td::Scheduler*>(arg_void);
 
 #ifdef CC_OS_WINDOWS
     __try
@@ -439,7 +441,7 @@ fiber_index_t td::Scheduler::acquireFreeFiber()
 #if TD_WARN_ON_DEADLOCKS
         if (attempt > 10)
         {
-            fprintf(stderr, "[td] Scheduler warning: Failing to find free fiber, possibly deadlocked\n");
+            fprintf(stderr, "[td] Scheduler warning: Failing to find free fiber, possibly deadlocked (attempt %d)\n", attempt);
         }
 #endif
     }
@@ -781,14 +783,14 @@ void td::Scheduler::counterCheckWaitingFibers(atomic_counter_t& counter, int val
 #endif
 }
 
-int td::Scheduler::counterIncrement(atomic_counter_t& counter, int amount)
+int32_t td::Scheduler::counterIncrement(atomic_counter_t& counter, int32_t amount)
 {
     CC_ASSERT(amount != 0 && "Must not increment counters by zero");
 
     int previous = counter.count.fetch_add(amount);
     int const new_val = previous + amount;
 
-    CC_ASSERT(previous != ECounterVal_Released && "Incremented a counter that was already released");
+    CC_ASSERT(previous != ECounterVal_Released && "Increment on counter that was already released");
 
     if (new_val == 0)
     {
@@ -797,6 +799,26 @@ int td::Scheduler::counterIncrement(atomic_counter_t& counter, int amount)
     }
 
     return new_val;
+}
+
+int32_t td::Scheduler::counterCompareAndSwap(atomic_counter_t& counter, int32_t comparand, int32_t exchange)
+{
+    CC_ASSERT(exchange != ECounterVal_Released && exchange >= 0 && "Must not CAS counters to below zero");
+
+    int32_t expected = comparand;
+    bool const success = counter.count.compare_exchange_strong(expected, exchange);
+
+    // 'expected' holds the initial value of the counter
+    CC_ASSERT(expected != ECounterVal_Released && "CAS on counter that was already released");
+
+    if (success && exchange == 0 && comparand != 0)
+    {
+        // CAS succeeded AND zero was written AND the previous value was non-zero
+        // this is equivalent to a decrement towards zero
+        counterCheckWaitingFibers(counter, 0);
+    }
+
+    return expected;
 }
 
 void td::Scheduler::start(td::Task const& main_task)
@@ -991,6 +1013,13 @@ void td::launchScheduler(SchedulerConfig const& configArg, Task const& mainTask)
     sched->mConfig = config;
 
     sched->mThreads.reset(config.staticAlloc, config.numThreads);
+
+    for (worker_thread_t& thread : sched->mThreads)
+    {
+        // allocate enough to never overflow
+        thread.pinned_resumable_fibers.initialize(config.numFibers, config.staticAlloc);
+    }
+
     sched->mFibers.reset(config.staticAlloc, config.numFibers);
     sched->mCounters.reset(config.staticAlloc, config.maxNumCounters);
 
@@ -1156,6 +1185,16 @@ int32_t td::decrementCounter(CounterHandle c, uint32_t amount)
     return sched->counterIncrement(sched->mCounters[counter_index], (int32_t)amount * -1);
 }
 
+int32_t td::compareAndSwapCounter(CounterHandle c, int32_t comparand, int32_t exchange)
+{
+    Scheduler* const sched = gSchedulerOnThread;
+    CC_ASSERT(sched != nullptr && "Called from outside scheduler, use td::launchScheduler() first");
+    CC_ASSERT(c.isValid() && "td::compareAndSwapCounter() called with invalid counter handle");
+
+    auto const counter_index = sched->mCounterHandles.get(c._value).counterIndex;
+    return sched->counterCompareAndSwap(sched->mCounters[counter_index], comparand, exchange);
+}
+
 int32_t td::createCounterDependency(CounterHandle counterToModify, CounterHandle counterToDependUpon)
 {
     Scheduler* const sched = gSchedulerOnThread;
@@ -1181,6 +1220,16 @@ int32_t td::createCounterDependency(CounterHandle counterToModify, CounterHandle
     }
 
     return counterToDependUponValueBeforeWait;
+}
+
+int32_t td::getApproximateCounterValue(CounterHandle c)
+{
+    Scheduler* const sched = gSchedulerOnThread;
+    CC_ASSERT(sched != nullptr && "Called from outside scheduler, use td::launchScheduler() first");
+    CC_ASSERT(c.isValid() && "td::getApproximateCounterValue() called with invalid counter handle");
+
+    auto const counter_index = sched->mCounterHandles.get(c._value).counterIndex;
+    return sched->mCounters[counter_index].count.load(std::memory_order_relaxed);
 }
 
 uint32_t td::getNumThreadsInScheduler()

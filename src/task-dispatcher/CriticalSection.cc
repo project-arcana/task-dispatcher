@@ -1,5 +1,7 @@
 #include "CriticalSection.hh"
 
+#include <clean-core/assert.hh>
+
 #include "Scheduler.hh"
 
 namespace
