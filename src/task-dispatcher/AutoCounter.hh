@@ -13,8 +13,8 @@ struct TD_API AutoCounter
 {
     AutoCounter() = default;
 
-    AutoCounter(AutoCounter&& rhs) : handle(rhs.handle) { rhs.handle.invalidate(); }
-    AutoCounter& operator=(AutoCounter&& rhs)
+    AutoCounter(AutoCounter&& rhs) noexcept : handle(rhs.handle) { rhs.handle.invalidate(); }
+    AutoCounter& operator=(AutoCounter&& rhs) noexcept
     {
         CC_ASSERT(!handle.isValid() && "Must call td::waitForCounter() on AutoCounter before dropping it");
         handle = rhs.handle;
