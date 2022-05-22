@@ -45,6 +45,11 @@ uint32_t submitBatched(CounterHandle counter, F&& func, uint32_t numElements, ui
 {
     static_assert(std::is_invocable_v<F, uint32_t, uint32_t, uint32_t>, "function must be invocable with element start, end, and index argument");
 
+    if (numElements == 0 || maxNumBatches == 0)
+    {
+        return 0;
+    }
+
     uint32_t const batchSize = cc::int_div_ceil(numElements, maxNumBatches);
     uint32_t const numBatches = cc::int_div_ceil(numElements, batchSize);
     CC_ASSERT(numBatches <= maxNumBatches && "programmer error");
@@ -65,8 +70,9 @@ uint32_t submitBatched(CounterHandle counter, F&& func, uint32_t numElements, ui
 
 // submits batched tasks calling a lambda "void f(T& value, uint32_t idx, uint32_t batchIdx)" for each element in the span
 // data in 'values' must stay alive until all tasks ran through
+// returns amount of batches
 template <class T, class F>
-void submitBatchedOnArray(CounterHandle counter, F&& func, cc::span<T> values, uint32_t maxNumBatches, cc::allocator* scratch)
+uint32_t submitBatchedOnArray(CounterHandle counter, F&& func, cc::span<T> values, uint32_t maxNumBatches, cc::allocator* scratch)
 {
     static_assert(std::is_invocable_v<F, T&, uint32_t, uint32_t>, "function must be invocable with element reference");
     static_assert(std::is_same_v<std::invoke_result_t<F, T&, uint32_t, uint32_t>, void>, "return must be void");
@@ -75,7 +81,7 @@ void submitBatchedOnArray(CounterHandle counter, F&& func, cc::span<T> values, u
     uint32_t const numValues = uint32_t(values.size());
 
     // copy the lambda
-    td::submitBatched(
+    return td::submitBatched(
         counter,
         [func, pValues](uint32_t start, uint32_t end, uint32_t batchIdx)
         {
