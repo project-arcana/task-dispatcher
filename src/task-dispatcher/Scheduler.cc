@@ -26,8 +26,8 @@
 #include <task-dispatcher/container/FIFOQueue.hh>
 #include <task-dispatcher/container/MPMCQueue.hh>
 #include <task-dispatcher/container/Task.hh>
-#include <task-dispatcher/native/fiber.hh>
-#include <task-dispatcher/native/thread.hh>
+#include <task-dispatcher/native/Fiber.hh>
+#include <task-dispatcher/native/Threading.hh>
 #include <task-dispatcher/native/util.hh>
 
 
