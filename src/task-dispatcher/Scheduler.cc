@@ -10,11 +10,15 @@
 #include <clean-core/array.hh>
 #include <clean-core/assert.hh>
 #include <clean-core/atomic_linked_pool.hh>
+#include <clean-core/lock_guard.hh>
 #include <clean-core/macros.hh>
 #include <clean-core/spin_lock.hh>
-#include <clean-core/lock_guard.hh>
 #include <clean-core/utility.hh>
 #include <clean-core/vector.hh>
+
+#ifdef CC_OS_WINDOWS
+#include <clean-core/native/win32_sanitized.hh>
+#endif
 
 #ifdef TD_HAS_RICH_LOG
 #include <rich-log/StdOutLogger.hh>
