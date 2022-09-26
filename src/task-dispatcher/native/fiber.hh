@@ -20,6 +20,8 @@
 
 namespace td::native
 {
+struct fiber_t;
+
 #ifdef CC_OS_WINDOWS
 struct fiber_t
 {
@@ -33,15 +35,13 @@ struct fiber_t
 };
 #endif
 
-TD_API void set_low_thread_prio();
+TD_API void createMainFiber(fiber_t* pOutFiber);
 
-TD_API void create_main_fiber(fiber_t& fiber);
+TD_API void deleteMainFiber(fiber_t const& fiber);
 
-TD_API void delete_main_fiber(fiber_t& fiber);
+TD_API void createFiber(fiber_t* pOutFiber, void (*pFiberEntry)(void*), void* pUserdata, size_t numBytesStack, cc::allocator* pAlloc);
 
-TD_API void create_fiber(fiber_t& fiber, void (*pFiberEntry)(void*), void* pUserdata, size_t numBytesStack, cc::allocator* pAlloc);
+TD_API void deleteFiber(fiber_t const& fiber, cc::allocator* pAllocator);
 
-TD_API void delete_fiber(fiber_t& fiber, cc::allocator* pAllocator);
-
-TD_API void switch_to_fiber(fiber_t fiber, fiber_t);
+TD_API void switchToFiber(fiber_t const& destFiber, fiber_t const& srcFiber);
 }

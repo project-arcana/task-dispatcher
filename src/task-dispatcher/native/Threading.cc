@@ -23,7 +23,7 @@
 
 #ifdef CC_OS_WINDOWS
 
-namespace td::native::detail
+namespace td::native
 {
 namespace
 {
@@ -38,35 +38,12 @@ typedef struct tagTHREADNAME_INFO
 } THREADNAME_INFO;
 #pragma pack(pop)
 
-void set_win32_thread_name(DWORD dwThreadID, const char* threadName)
-{
-    // this throws a SEH exception which is one of two ways of setting a thread name
-    // in Win32. the other is less reliable and only available after Win10 1607
-    // see https://docs.microsoft.com/en-us/visualstudio/debugger/how-to-set-a-thread-name-in-native-code?view=vs-2019
-
-    THREADNAME_INFO info;
-    info.dwType = 0x1000;
-    info.szName = threadName;
-    info.dwThreadID = dwThreadID;
-    info.dwFlags = 0;
-#pragma warning(push)
-#pragma warning(disable : 6320 6322)
-    __try
-    {
-        RaiseException(0x406D1388, 0, sizeof(info) / sizeof(ULONG_PTR), (ULONG_PTR*)&info);
-    }
-    __except (EXCEPTION_EXECUTE_HANDLER)
-    {
-    }
-#pragma warning(pop)
-}
-
-::CRITICAL_SECTION* GetCriticalSectionPtr(td::native::event_t* pEvent)
+::CRITICAL_SECTION* getCriticalSectionPtr(td::native::event_t* pEvent)
 {
     return reinterpret_cast<::CRITICAL_SECTION*>(&pEvent->criticalSection.buf[0]);
 }
 
-::CONDITION_VARIABLE* GetConditionVariablePtr(td::native::event_t* pEvent)
+::CONDITION_VARIABLE* getConditionVariablePtr(td::native::event_t* pEvent)
 {
     return reinterpret_cast<::CONDITION_VARIABLE*>(&pEvent->conditionVariable.buf[0]);
 }
@@ -79,16 +56,7 @@ static_assert(sizeof(td::native::Win32ConditionVariable) == sizeof(::CONDITION_V
 static_assert(alignof(td::native::Win32CritSection) == alignof(::CRITICAL_SECTION), "Win32CritSection misaligns");
 static_assert(sizeof(td::native::Win32CritSection) == sizeof(::CRITICAL_SECTION), "Win32CritSection has wrong size");
 
-void td::native::set_current_thread_debug_name(int id)
-{
-#ifndef NDEBUG
-    char buf[256];
-    std::snprintf(buf, sizeof(buf), "td worker thread #%02d", id);
-    detail::set_win32_thread_name((DWORD)-1, buf);
-#endif
-}
-
-bool td::native::create_thread(size_t stack_size, thread_start_func_t start_routine, void* arg, thread_t* return_thread)
+bool td::native::createThread(size_t stack_size, thread_start_func_t start_routine, void* arg, thread_t* return_thread)
 {
     CC_ASSERT(stack_size <= unsigned(-1));
     auto const handle = reinterpret_cast<::HANDLE>(::_beginthreadex(nullptr, unsigned(stack_size), start_routine, arg, 0U, nullptr));
@@ -102,7 +70,7 @@ bool td::native::create_thread(size_t stack_size, thread_start_func_t start_rout
     return handle != nullptr;
 }
 
-bool td::native::create_thread(size_t stack_size, thread_start_func_t start_routine, void* arg, size_t core_affinity, thread_t* return_thread)
+bool td::native::createThread(size_t stack_size, thread_start_func_t start_routine, void* arg, size_t core_affinity, thread_t* return_thread)
 {
     CC_ASSERT(stack_size <= unsigned(-1));
     auto const handle = reinterpret_cast<::HANDLE>(::_beginthreadex(nullptr, unsigned(stack_size), start_routine, arg, CREATE_SUSPENDED, nullptr));
@@ -122,35 +90,59 @@ bool td::native::create_thread(size_t stack_size, thread_start_func_t start_rout
     return true;
 }
 
-void td::native::end_current_thread() { ::_endthreadex(0); }
+void td::native::endCurrentThread() { ::_endthreadex(0); }
 
-void td::native::join_thread(thread_t thread) { ::WaitForSingleObject(thread.handle, INFINITE); }
+void td::native::joinThread(thread_t thread) { ::WaitForSingleObject(thread.handle, INFINITE); }
 
-td::native::thread_t td::native::get_current_thread() { return thread_t{::GetCurrentThread(), ::GetCurrentThreadId()}; }
+td::native::thread_t td::native::getCurrentThread() { return thread_t{::GetCurrentThread(), ::GetCurrentThreadId()}; }
 
-void td::native::set_current_thread_affinity(size_t coreAffinity) { ::SetThreadAffinityMask(::GetCurrentThread(), 1ULL << coreAffinity); }
+void td::native::setCurrentThreadCoreAffinity(size_t coreAffinity) { ::SetThreadAffinityMask(::GetCurrentThread(), 1ULL << coreAffinity); }
 
-void td::native::create_event(event_t* event)
+void td::native::setCurrentThreadLowPriority() { ::SetThreadPriority(::GetCurrentThread(), THREAD_PRIORITY_BELOW_NORMAL); }
+
+void td::native::setCurrentThreadDebugName(char const* pName)
 {
-    ::InitializeConditionVariable(detail::GetConditionVariablePtr(event));
-    ::InitializeCriticalSection(detail::GetCriticalSectionPtr(event));
+    // this throws a SEH exception which is one of two ways of setting a thread name
+    // in Win32. the other is less reliable and only available after Win10 1607
+    // see https://docs.microsoft.com/en-us/visualstudio/debugger/how-to-set-a-thread-name-in-native-code?view=vs-2019
+
+    THREADNAME_INFO info;
+    info.dwType = 0x1000;
+    info.szName = pName;
+    info.dwThreadID = (DWORD)-1;
+    info.dwFlags = 0;
+#pragma warning(push)
+#pragma warning(disable : 6320 6322)
+    __try
+    {
+        RaiseException(0x406D1388, 0, sizeof(info) / sizeof(ULONG_PTR), (ULONG_PTR*)&info);
+    }
+    __except (EXCEPTION_EXECUTE_HANDLER)
+    {
+    }
+#pragma warning(pop)
 }
 
-void td::native::destroy_event(event_t& eventId) { ::DeleteCriticalSection(detail::GetCriticalSectionPtr(&eventId)); }
-
-// returns false on timeout
-bool td::native::wait_for_event(event_t& eventId, uint32_t milliseconds)
+void td::native::createEvent(event_t* event)
 {
-    ::EnterCriticalSection(detail::GetCriticalSectionPtr(&eventId));
-    ::BOOL const retval = ::SleepConditionVariableCS(detail::GetConditionVariablePtr(&eventId), detail::GetCriticalSectionPtr(&eventId), milliseconds);
-    CC_ASSERT(retval ? true : GetLastError() == ERROR_TIMEOUT && "Failed to wait on native CV");
-    ::LeaveCriticalSection(detail::GetCriticalSectionPtr(&eventId));
+    ::InitializeConditionVariable(getConditionVariablePtr(event));
+    ::InitializeCriticalSection(getCriticalSectionPtr(event));
+}
+
+void td::native::destroyEvent(event_t& eventId) { ::DeleteCriticalSection(getCriticalSectionPtr(&eventId)); }
+
+bool td::native::waitForEvent(event_t& eventId, uint32_t milliseconds)
+{
+    ::EnterCriticalSection(getCriticalSectionPtr(&eventId));
+    ::BOOL const retval = ::SleepConditionVariableCS(getConditionVariablePtr(&eventId), getCriticalSectionPtr(&eventId), milliseconds);
+    CC_ASSERT(retval ? true : GetLastError() == ERROR_TIMEOUT && "Failed to wait on Win32 Condition Variable");
+    ::LeaveCriticalSection(getCriticalSectionPtr(&eventId));
     return bool(retval);
 }
 
-void td::native::signal_event(event_t& eventId) { ::WakeAllConditionVariable(detail::GetConditionVariablePtr(&eventId)); }
+void td::native::signalEvent(event_t& eventId) { ::WakeAllConditionVariable(getConditionVariablePtr(&eventId)); }
 
-void td::native::thread_sleep(uint32_t milliseconds) { ::Sleep(milliseconds); }
+void td::native::threadSleep(uint32_t milliseconds) { ::Sleep(milliseconds); }
 
 #else
 
@@ -249,28 +241,28 @@ inline bool create_posix_thread(size_t stack_size, thread_start_func_t start_rou
 }
 }
 
-void td::native::set_current_thread_debug_name(int id)
+void td::native::setCurrentThreadDebugName(char const* pName)
 {
-    (void)id; // TODO
+    (void)pName; // TODO
 }
 
-bool td::native::create_thread(size_t stack_size, thread_start_func_t start_routine, void* arg, thread_t* return_thread)
+bool td::native::createThread(size_t stack_size, thread_start_func_t start_routine, void* arg, thread_t* return_thread)
 {
     return detail::create_posix_thread(stack_size, start_routine, arg, false, 0, return_thread);
 }
 
-bool td::native::create_thread(size_t stack_size, thread_start_func_t start_routine, void* arg, size_t core_affinity, thread_t* return_thread)
+bool td::native::createThread(size_t stack_size, thread_start_func_t start_routine, void* arg, size_t core_affinity, thread_t* return_thread)
 {
     return detail::create_posix_thread(stack_size, start_routine, arg, true, core_affinity, return_thread);
 }
 
-void td::native::end_current_thread() { pthread_exit(nullptr); }
+void td::native::endCurrentThread() { pthread_exit(nullptr); }
 
-void td::native::join_thread(thread_t thread) { pthread_join(thread.native, nullptr); }
+void td::native::joinThread(thread_t thread) { pthread_join(thread.native, nullptr); }
 
-td::native::thread_t td::native::get_current_thread() { return {pthread_self()}; }
+td::native::thread_t td::native::getCurrentThread() { return {pthread_self()}; }
 
-void td::native::set_current_thread_affinity(size_t coreAffinity)
+void td::native::setCurrentThreadCoreAffinity(size_t coreAffinity)
 {
     // TODO: OSX and MinGW Thread Affinity
 #if defined(CC_OS_LINUX)
@@ -284,14 +276,14 @@ void td::native::set_current_thread_affinity(size_t coreAffinity)
 #endif
 }
 
-void td::native::create_event(event_t* event) { *event = {PTHREAD_COND_INITIALIZER, PTHREAD_MUTEX_INITIALIZER}; }
+void td::native::createEvent(event_t* event) { *event = {PTHREAD_COND_INITIALIZER, PTHREAD_MUTEX_INITIALIZER}; }
 
-void td::native::destroy_event(event_t& /*eventId*/)
+void td::native::destroyEvent(event_t& /*eventId*/)
 {
     // No op
 }
 
-bool td::native::wait_for_event(event_t& eventId, int64_t milliseconds)
+bool td::native::waitForEvent(event_t& eventId, int64_t milliseconds)
 {
     pthread_mutex_lock(&eventId.mutex);
 
@@ -316,14 +308,14 @@ bool td::native::wait_for_event(event_t& eventId, int64_t milliseconds)
     return event_was_signalled;
 }
 
-void td::native::signal_event(event_t& eventId)
+void td::native::signalEvent(event_t& eventId)
 {
     pthread_mutex_lock(&eventId.mutex);
     pthread_cond_broadcast(&eventId.cond);
     pthread_mutex_unlock(&eventId.mutex);
 }
 
-void td::native::thread_sleep(uint32_t milliseconds)
+void td::native::threadSleep(uint32_t milliseconds)
 {
     usleep(milliseconds * 1000);
 

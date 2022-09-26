@@ -288,21 +288,26 @@ TD_NATIVE_THREAD_FUNC_DECL entrypointWorkerThread(void* arg_void)
     gTLS.thread_index = worker_arg->index;
 
     // worker thread startup tasks
-#ifdef TD_HAS_RICH_LOG
-    // set the rich-log thread name (shown as a prefix)
-    rlog::setCurrentThreadName("td#%02u", worker_arg->index);
-#endif
-    // set the thead name for debuggers
-    td::native::set_current_thread_debug_name(int(worker_arg->index));
-
-    // optionally call user provided startup function
-    if (worker_arg->thread_startstop_func)
     {
-        worker_arg->thread_startstop_func(uint32_t(worker_arg->index), true, worker_arg->thread_startstop_userdata);
+#ifdef TD_HAS_RICH_LOG
+        // set the rich-log thread name (shown as a prefix)
+        rlog::setCurrentThreadName("td#%02u", worker_arg->index);
+#endif
+
+        // set the thead name for debuggers
+        char buf[256];
+        std::snprintf(buf, sizeof(buf), "td worker thread #%02d", int(worker_arg->index));
+        td::native::setCurrentThreadDebugName(buf);
+
+        // optionally call user provided startup function
+        if (worker_arg->thread_startstop_func)
+        {
+            worker_arg->thread_startstop_func(uint32_t(worker_arg->index), true, worker_arg->thread_startstop_userdata);
+        }
     }
 
     // Set up thread fiber
-    td::native::create_main_fiber(gTLS.thread_fiber);
+    td::native::createMainFiber(&gTLS.thread_fiber);
 
     // ------
     // main work, on main worker fiber
@@ -310,7 +315,7 @@ TD_NATIVE_THREAD_FUNC_DECL entrypointWorkerThread(void* arg_void)
         gTLS.current_fiber_index = scheduler->acquireFreeFiber();
         auto& fiber = scheduler->mFibers[gTLS.current_fiber_index].native;
 
-        td::native::switch_to_fiber(fiber, gTLS.thread_fiber);
+        td::native::switchToFiber(fiber, gTLS.thread_fiber);
     }
     // returned, shutdown worker thread
     // ------
@@ -324,8 +329,8 @@ TD_NATIVE_THREAD_FUNC_DECL entrypointWorkerThread(void* arg_void)
     // Clean up allocated argument
     delete worker_arg;
 
-    td::native::delete_main_fiber(gTLS.thread_fiber);
-    td::native::end_current_thread();
+    td::native::deleteMainFiber(gTLS.thread_fiber);
+    td::native::endCurrentThread();
 
 
     TD_NATIVE_THREAD_FUNC_END;
@@ -379,7 +384,7 @@ static void entrypointFiber(void* arg_void)
                     // reached max backoff, wait for global event
 
                     // wait until the global event is signalled, with timeout
-                    bool signalled = td::native::wait_for_event(scheduler->mEventWorkAvailable, 10);
+                    bool signalled = td::native::waitForEvent(scheduler->mEventWorkAvailable, 10);
 
 #if TD_WARN_ON_WAITING_TIMEOUTS
                     if (!signalled)
@@ -406,7 +411,7 @@ static void entrypointFiber(void* arg_void)
         }
 
         // Switch back to thread fiber of the current thread
-        td::native::switch_to_fiber(gTLS.thread_fiber, scheduler->mFibers[gTLS.current_fiber_index].native);
+        td::native::switchToFiber(gTLS.thread_fiber, scheduler->mFibers[gTLS.current_fiber_index].native);
 
         CC_RUNTIME_ASSERT(false && "Reached end of entrypointFiber");
     }
@@ -428,7 +433,7 @@ static void entrypointPrimaryFiber(void* arg_void)
     arg.owning_scheduler->mIsShuttingDown.store(true, std::memory_order_release);
 
     // Return to main thread fiber
-    td::native::switch_to_fiber(gTLS.thread_fiber, arg.owning_scheduler->mFibers[gTLS.current_fiber_index].native);
+    td::native::switchToFiber(gTLS.thread_fiber, arg.owning_scheduler->mFibers[gTLS.current_fiber_index].native);
 
     CC_RUNTIME_ASSERT(false && "Reached end of entrypointPrimaryFiber");
 }
@@ -459,7 +464,7 @@ void td::Scheduler::yieldToFiber(fiber_index_t target_fiber, fiber_destination_e
 
     CC_ASSERT(gTLS.previous_fiber_index != invalid_fiber && gTLS.current_fiber_index != invalid_fiber);
 
-    native::switch_to_fiber(mFibers[gTLS.current_fiber_index].native, mFibers[gTLS.previous_fiber_index].native);
+    native::switchToFiber(mFibers[gTLS.current_fiber_index].native, mFibers[gTLS.previous_fiber_index].native);
     cleanUpPrevFiber();
 }
 
@@ -517,7 +522,7 @@ bool td::Scheduler::getNextTask(td::Task& task)
                 }
 
                 // signal the global event
-                native::signal_event(mEventWorkAvailable);
+                native::signalEvent(mEventWorkAvailable);
             }
             // Fallthrough to global resumables
         }
@@ -541,7 +546,7 @@ bool td::Scheduler::getNextTask(td::Task& task)
                 CC_ASSERT(success);
 
                 // signal the global event
-                native::signal_event(mEventWorkAvailable);
+                native::signalEvent(mEventWorkAvailable);
             }
             // Fallthrough to global pending Chase-Lev / MPMC
         }
@@ -722,7 +727,7 @@ void td::Scheduler::counterCheckWaitingFibers(atomic_counter_t& counter, int val
         }
     }
 
-    native::signal_event(mEventWorkAvailable);
+    native::signalEvent(mEventWorkAvailable);
 
 #else
 
@@ -778,7 +783,7 @@ void td::Scheduler::counterCheckWaitingFibers(atomic_counter_t& counter, int val
             }
 
             // signal the global event
-            native::signal_event(mEventWorkAvailable);
+            native::signalEvent(mEventWorkAvailable);
 
             // Free the slot
             counter.free_waiting_slots[i].store(true, std::memory_order_release);
@@ -837,7 +842,7 @@ void td::Scheduler::start(td::Task const& main_task)
 
     mIsShuttingDown.store(false, std::memory_order_seq_cst);
 
-    native::create_event(&mEventWorkAvailable);
+    native::createEvent(&mEventWorkAvailable);
 
 #ifdef CC_OS_WINDOWS
     // attempt to make the win32 scheduler as granular as possible for faster Sleep(1)
@@ -853,20 +858,20 @@ void td::Scheduler::start(td::Task const& main_task)
     // The main thread is thread 0 by convention
     auto& main_thread = mThreads[0];
     {
-        main_thread.native = native::get_current_thread();
+        main_thread.native = native::getCurrentThread();
 
         if (mConfig.pinThreadsToCores)
         {
             // lock main thread to core N
             // (core 0 is conventionally reserved for OS operations and driver interrupts, poor fit for the main thread)
-            native::set_current_thread_affinity(mThreads.size() - 1);
+            native::setCurrentThreadCoreAffinity(mThreads.size() - 1);
         }
 
         gTLS.reset();
         gSchedulerOnThread = this;
 
         // Create main fiber on this thread
-        native::create_main_fiber(gTLS.thread_fiber);
+        native::createMainFiber(&gTLS.thread_fiber);
 
 #ifdef TD_HAS_RICH_LOG
         rlog::setCurrentThreadName("td#00");
@@ -876,7 +881,7 @@ void td::Scheduler::start(td::Task const& main_task)
     // Populate fiber pool
     for (fiber_index_t i = 0; i < mFibers.size(); ++i)
     {
-        native::create_fiber(mFibers[i].native, entrypointFiber, this, mConfig.fiberStackSizeBytes, mConfig.staticAlloc);
+        native::createFiber(&mFibers[i].native, entrypointFiber, this, mConfig.fiberStackSizeBytes, mConfig.staticAlloc);
         bool success = mIdleFibers.enqueue(i);
         CC_ASSERT(success);
     }
@@ -911,13 +916,12 @@ void td::Scheduler::start(td::Task const& main_task)
             {
                 // Create the thread, pinned to core (i - 1), the main thread occupies core N
                 uint32_t const pinned_core_index = i - 1;
-                success = native::create_thread(mConfig.fiberStackSizeBytes + thread_stack_overhead_safety, entrypointWorkerThread, worker_arg,
-                                                pinned_core_index, &thread.native);
+                success = native::createThread(mConfig.fiberStackSizeBytes + thread_stack_overhead_safety, entrypointWorkerThread, worker_arg,
+                                               pinned_core_index, &thread.native);
             }
             else
             {
-                success
-                    = native::create_thread(mConfig.fiberStackSizeBytes + thread_stack_overhead_safety, entrypointWorkerThread, worker_arg, &thread.native);
+                success = native::createThread(mConfig.fiberStackSizeBytes + thread_stack_overhead_safety, entrypointWorkerThread, worker_arg, &thread.native);
             }
             CC_ASSERT(success && "Failed to create worker thread");
         }
@@ -934,11 +938,11 @@ void td::Scheduler::start(td::Task const& main_task)
         auto& initial_fiber = mFibers[gTLS.current_fiber_index];
 
         // reset the fiber, creating the primary fiber
-        native::delete_fiber(initial_fiber.native, mConfig.staticAlloc);
-        native::create_fiber(initial_fiber.native, entrypointPrimaryFiber, &primary_fiber_arg, mConfig.fiberStackSizeBytes, mConfig.staticAlloc);
+        native::deleteFiber(initial_fiber.native, mConfig.staticAlloc);
+        native::createFiber(&initial_fiber.native, entrypointPrimaryFiber, &primary_fiber_arg, mConfig.fiberStackSizeBytes, mConfig.staticAlloc);
 
         // Launch the primary fiber
-        native::switch_to_fiber(initial_fiber.native, gTLS.thread_fiber);
+        native::switchToFiber(initial_fiber.native, gTLS.thread_fiber);
     }
 
     // The primary fiber has returned, begin shutdown
@@ -950,23 +954,23 @@ void td::Scheduler::start(td::Task const& main_task)
         }
 
         // wake up all threads
-        native::signal_event(mEventWorkAvailable);
+        native::signalEvent(mEventWorkAvailable);
 
         // Delete the main fiber
-        native::delete_main_fiber(gTLS.thread_fiber);
+        native::deleteMainFiber(gTLS.thread_fiber);
 
         // Join worker threads, starting at 1
         for (auto i = 1u; i < mThreads.size(); ++i)
         {
             // re-signal before joining each thread
-            native::signal_event(mEventWorkAvailable);
-            native::join_thread(mThreads[i].native);
+            native::signalEvent(mEventWorkAvailable);
+            native::joinThread(mThreads[i].native);
         }
 
         // destroy OS fibers
         for (auto& fib : mFibers)
         {
-            native::delete_fiber(fib.native, mConfig.staticAlloc);
+            native::deleteFiber(fib.native, mConfig.staticAlloc);
         }
 
         // Clear sCurrentScheduler
@@ -987,7 +991,7 @@ void td::Scheduler::start(td::Task const& main_task)
     native::win32_shutdown_utils();
 #endif
 
-    native::destroy_event(mEventWorkAvailable);
+    native::destroyEvent(mEventWorkAvailable);
 }
 
 void td::launchScheduler(SchedulerConfig const& configArg, Task const& mainTask)
@@ -1126,7 +1130,7 @@ void td::submitTasks(CounterHandle c, cc::span<Task> tasks)
     }
 
     // signal the global event
-    native::signal_event(sched->mEventWorkAvailable);
+    native::signalEvent(sched->mEventWorkAvailable);
 
     CC_RUNTIME_ASSERT(success && "Task queue is full, consider increasing config.maxNumTasks");
 }

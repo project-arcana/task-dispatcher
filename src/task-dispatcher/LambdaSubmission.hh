@@ -3,8 +3,8 @@
 #include <type_traits>
 
 #include <clean-core/enable_if.hh>
-#include <clean-core/span.hh>
 #include <clean-core/forward.hh>
+#include <clean-core/span.hh>
 
 #include <task-dispatcher/CounterHandle.hh>
 #include <task-dispatcher/Scheduler.hh>
@@ -21,8 +21,8 @@ namespace td
 template <class F, cc::enable_if<std::is_invocable_r_v<void, F>> = true>
 void submitLambda(CounterHandle counter, F&& func)
 {
-    static_assert(std::is_invocable_v<F>, "function must be invocable without arguments");
-    static_assert(std::is_invocable_r_v<void, F>, "return must be void");
+    static_assert(std::is_invocable_v<F>, "td::submitLambda: Function must be callable without arguments");
+    static_assert(std::is_invocable_r_v<void, F>, "td::submitLambda: Function must return void");
 
     Task dispatch;
     if constexpr (std::is_class_v<F>)

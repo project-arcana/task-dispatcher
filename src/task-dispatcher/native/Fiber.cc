@@ -25,25 +25,31 @@ extern "C" inline int __gxx_personality_v0() { return 0; }
 
 // Thin native fiber abstraction for Win32
 
-void td::native::set_low_thread_prio() { ::SetThreadPriority(::GetCurrentThread(), THREAD_PRIORITY_BELOW_NORMAL); }
-
-void td::native::create_main_fiber(fiber_t& fib)
+void td::native::createMainFiber(fiber_t* pOutFiber)
 {
-    fib.native = ::ConvertThreadToFiber(nullptr);
-    CC_ASSERT(fib.native != nullptr && "Thread to fiber conversion failed");
+    CC_ASSERT(pOutFiber);
+
+    pOutFiber->native = ::ConvertThreadToFiber(nullptr);
+    CC_ASSERT(pOutFiber->native != nullptr && "Thread to fiber conversion failed");
 }
 
-void td::native::delete_main_fiber(fiber_t&) { ::ConvertFiberToThread(); }
+void td::native::deleteMainFiber(fiber_t const&) { ::ConvertFiberToThread(); }
 
-void td::native::create_fiber(fiber_t& fib, void (*fiber_proc)(void*), void* ctx, size_t stack_size, cc::allocator*)
+void td::native::createFiber(fiber_t* pOutFiber, void (*pFiberEntry)(void*), void* pUserdata, size_t numBytesStack, cc::allocator*)
 {
-    fib.native = ::CreateFiber(stack_size, static_cast<LPFIBER_START_ROUTINE>(fiber_proc), ctx);
-    CC_ASSERT(fib.native != nullptr && "Fiber creation failed");
+    CC_ASSERT(pOutFiber);
+
+    pOutFiber->native = ::CreateFiber(numBytesStack, static_cast<LPFIBER_START_ROUTINE>(pFiberEntry), pUserdata);
+    CC_ASSERT(pOutFiber->native != nullptr && "Fiber creation failed");
 }
 
-void td::native::delete_fiber(fiber_t& fib, cc::allocator*) { ::DeleteFiber(fib.native); }
+void td::native::deleteFiber(fiber_t const& fib, cc::allocator*) { ::DeleteFiber(fib.native); }
 
-void td::native::switch_to_fiber(fiber_t fib, fiber_t) { ::SwitchToFiber(fib.native); }
+void td::native::switchToFiber(fiber_t const& destFiber, fiber_t const& srcFiber)
+{
+    (void)srcFiber;
+    ::SwitchToFiber(destFiber.native);
+}
 
 #else
 
@@ -75,34 +81,31 @@ void fiber_start_fnc(void* p)
 }
 }
 
-void td::native::set_low_thread_prio() {}
+void td::native::createMainFiber(fiber_t* pOutFiber) { std::memset(pOutFiber, 0, sizeof(fiber_t)); }
 
-void td::native::create_main_fiber(fiber_t& fib) { std::memset(&fib, 0, sizeof(fib)); }
-
-void td::native::delete_main_fiber(fiber_t&)
+void td::native::deleteMainFiber(fiber_t const&)
 {
     // no op
 }
 
-void td::native::create_fiber(fiber_t& fib, void (*ufnc)(void*), void* uctx, size_t stack_size, cc::allocator* alloc)
+void td::native::createFiber(fiber_t* pOutFiber, void (*ufnc)(void*), void* uctx, size_t stack_size, cc::allocator* alloc)
 {
-    ::getcontext(&fib.fib);
-    fib.fib.uc_stack.ss_sp = reinterpret_cast<void*>(alloc->alloc(stack_size));
-    fib.fib.uc_stack.ss_size = stack_size;
-    fib.fib.uc_link = nullptr;
+    ::getcontext(&pOutFiber->fib);
+    pOutFiber->fib.uc_stack.ss_sp = reinterpret_cast<void*>(alloc->alloc(stack_size));
+    pOutFiber->fib.uc_stack.ss_size = stack_size;
+    pOutFiber->fib.uc_link = nullptr;
     ::ucontext_t tmp;
-    fiber_ctx_t ctx = {ufnc, uctx, &fib.jmp, &tmp};
-    ::makecontext(&fib.fib, reinterpret_cast<void (*)()>(fiber_start_fnc), 1, &ctx);
-    ::swapcontext(&tmp, &fib.fib);
+    fiber_ctx_t ctx = {ufnc, uctx, &pOutFiber->jmp, &tmp};
+    ::makecontext(&pOutFiber->fib, reinterpret_cast<void (*)()>(fiber_start_fnc), 1, &ctx);
+    ::swapcontext(&tmp, &pOutFiber->fib);
 }
 
-void td::native::delete_fiber(fiber_t& fib, cc::allocator* alloc) { alloc->free(fib.fib.uc_stack.ss_sp); }
+void td::native::deleteFiber(fiber_t const& fib, cc::allocator* alloc) { alloc->free(fib.fib.uc_stack.ss_sp); }
 
-void td::native::switch_to_fiber(fiber_t& fib, fiber_t& prv)
+void td::native::switchToFiber(fiber_t const& destFiber, fiber_t const& srcFiber)
 {
-    if (::_setjmp(prv.jmp) == 0)
-        ::_longjmp(fib.jmp, 1);
+    if (::_setjmp(srcFiber.jmp) == 0)
+        ::_longjmp(destFiber.jmp, 1);
 }
-
 
 #endif
