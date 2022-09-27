@@ -6,11 +6,6 @@
 
 namespace td
 {
-enum
-{
-    l1_cacheline_size = 64
-};
-
 // Returns amount of logical CPU cores
 TD_API uint32_t getNumLogicalCPUCores() noexcept;
 

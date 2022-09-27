@@ -12,8 +12,10 @@
 #include <unistd.h>
 #endif
 
+#include <task-dispatcher/container/Task.hh>
+
 #ifdef CC_COMPILER_MSVC
-static_assert(td::l1_cacheline_size == std::hardware_destructive_interference_size, "L1 Cacheline size assumption wrong");
+static_assert(td::NumBytesL1Cacheline == std::hardware_destructive_interference_size, "L1 Cacheline size assumption wrong");
 #else
 // Clang doesn't support std::hardware_destructive_interference yet
 #endif

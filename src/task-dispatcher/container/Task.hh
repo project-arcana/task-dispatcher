@@ -16,23 +16,25 @@
 #include <clean-core/allocator.hh>
 #endif
 
-// the size of a task in cachelines (= 64B)
-#define TD_FIXED_TASK_SIZE 2
-
 namespace td
 {
+enum : uint32_t
+{
+    NumBytesL1Cacheline = 64,
+    NumBytesFixedTask = NumBytesL1Cacheline * 2,
+};
+
 // POD-struct storing tasks, from either a lambda with limited size capture, or a func ptr + void* userdata
 // also stores fixed size metadata
 //
 // NOTE: If initialized from a lambda, runTask() must get called exactly once on any copy of that instance, before the last
 // of them is either destroyed or re-initialized. Zero calls could leak captured non-trivial-dtor types like std::vector, more than one call would
 // read after free. This restriction allows task to be POD, but makes usage of this struct outside of rigid scenarios inadvisable.
-struct alignas(td::l1_cacheline_size* TD_FIXED_TASK_SIZE) Task
+struct alignas(NumBytesL1Cacheline) Task
 {
     enum
     {
-        ETask_Size = td::l1_cacheline_size * TD_FIXED_TASK_SIZE,
-        ETask_UsableBufferSize = ETask_Size - sizeof(uint16_t) - sizeof(void*),
+        Task_NumBytesUsableBuffer = NumBytesFixedTask - sizeof(uint16_t) - sizeof(void*),
     };
 
     explicit Task() = default;
@@ -131,7 +133,7 @@ struct alignas(td::l1_cacheline_size* TD_FIXED_TASK_SIZE) Task
     void runTask() { mInvokingFunction(mBuffer); }
 
 private:
-    alignas(alignof(std::max_align_t)) std::byte mBuffer[ETask_UsableBufferSize];
+    alignas(alignof(std::max_align_t)) std::byte mBuffer[Task_NumBytesUsableBuffer];
 
 public:
     uint16_t mMetadata;

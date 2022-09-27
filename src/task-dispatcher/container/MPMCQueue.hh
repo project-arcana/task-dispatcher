@@ -9,8 +9,6 @@
 #include <clean-core/assert.hh>
 #include <clean-core/bits.hh>
 
-#include <task-dispatcher/common/system_info.hh>
-
 namespace td
 {
 // Alloc-free MPMC queue, ~75 cycles per enqueue and dequeue
@@ -94,12 +92,12 @@ private:
         T data_;
     };
 
-    alignas(l1_cacheline_size) cc::alloc_array<cell> mBuffer;
+    alignas(64) cc::alloc_array<cell> mBuffer;
 
     size_t mBufferMask = 0;
 
-    alignas(l1_cacheline_size) std::atomic<size_t> mEnqueuePos = {0};
-    alignas(l1_cacheline_size) std::atomic<size_t> mDequeuePos = {0};
+    alignas(64) std::atomic<size_t> mEnqueuePos = {0};
+    alignas(64) std::atomic<size_t> mDequeuePos = {0};
 
     MPMCQueue(MPMCQueue const& other) = delete;
     MPMCQueue(MPMCQueue&& other) noexcept = delete;

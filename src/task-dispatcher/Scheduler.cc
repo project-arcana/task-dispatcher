@@ -59,9 +59,9 @@ namespace td
 struct Scheduler;
 
 // checks about td::Task
-static_assert(sizeof(td::Task) == td::l1_cacheline_size * TD_FIXED_TASK_SIZE, "task type is unexpectedly large");
-static_assert(sizeof(td::Task[8]) == td::l1_cacheline_size * TD_FIXED_TASK_SIZE * 8, "task arrays are unexpectedly large, overaligned?");
-static_assert(alignof(td::Task) >= td::l1_cacheline_size, "task type risks misalignment");
+static_assert(sizeof(td::Task) == td::NumBytesFixedTask, "task type is unexpectedly large");
+static_assert(sizeof(td::Task[8]) == td::NumBytesFixedTask * 8, "task arrays are unexpectedly large, overaligned?");
+static_assert(alignof(td::Task) >= td::NumBytesL1Cacheline, "task type risks misalignment");
 static_assert(std::is_trivial_v<td::Task>, "task is not trivial");
 }
 
