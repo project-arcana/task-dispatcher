@@ -102,8 +102,7 @@ struct alignas(NumBytesL1Cacheline) Task
                 pReadAlloc->delete_t<T>(pReadLambda);
             };
 #else
-            static_assert(sizeof(T) == 0, "Lambda capture is too large, enable TD_ALLOW_HEAP_TASKS, reduce capture size or increase "
-                                          "TD_FIXED_TASK_SIZE");
+            static_assert(sizeof(T) == 0, "Lambda capture is too large. reduce capture size or enable TD_ALLOW_HEAP_TASKS");
 #endif
         }
     }
