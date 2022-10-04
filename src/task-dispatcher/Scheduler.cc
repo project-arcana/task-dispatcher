@@ -112,14 +112,6 @@ struct WaitingFiberVector
 
 struct atomic_counter_t
 {
-    struct waiting_fiber_t
-    {
-        int counter_target = 0;                              // the counter value that this fiber is waiting for
-        fiber_index_t fiber_index = invalid_fiber;           // index of the waiting fiber
-        thread_index_t pinned_thread_index = invalid_thread; // index of the thread this fiber is pinned to, invalid_thread if unpinned
-        std::atomic_bool in_use{true};                       // whether this slot in the array is currently being processed
-    };
-
     // The value of this counter
     std::atomic<int32_t> count;
 
@@ -127,6 +119,14 @@ struct atomic_counter_t
     cc::spin_lock spinLockWaitingVector;
     WaitingFiberVector waitingVector;
 #else
+    struct waiting_fiber_t
+    {
+        int counterTarget = 0;                           // the counter value that this fiber is waiting for
+        fiber_index_t fiber_index = invalid_fiber;       // index of the waiting fiber
+        thread_index_t pinnedThreadIdx = invalid_thread; // index of the thread this fiber is pinned to, invalid_thread if unpinned
+        std::atomic_bool in_use{true};                   // whether this slot in the array is currently being processed
+    };
+
     static constexpr uint32_t max_waiting = 32;
     cc::array<waiting_fiber_t, max_waiting> waiting_fibers = {};
     cc::array<std::atomic_bool, max_waiting> free_waiting_slots = {};
@@ -255,8 +255,6 @@ struct Scheduler
     int32_t counterIncrement(atomic_counter_t& counter, int32_t amount = 1);
 
     int32_t counterCompareAndSwap(atomic_counter_t& counter, int32_t comparand, int32_t exchange);
-
-    bool enqueueTasks(td::Task* tasks, uint32_t num_tasks, CounterHandle counter);
 };
 }
 
@@ -456,11 +454,11 @@ fiber_index_t td::Scheduler::acquireFreeFiber()
     }
 }
 
-void td::Scheduler::yieldToFiber(fiber_index_t target_fiber, fiber_destination_e own_destination)
+void td::Scheduler::yieldToFiber(fiber_index_t targetFiberIdx, fiber_destination_e ownFiberDestination)
 {
     gTLS.previous_fiber_index = gTLS.current_fiber_index;
-    gTLS.previous_fiber_dest = own_destination;
-    gTLS.current_fiber_index = target_fiber;
+    gTLS.previous_fiber_dest = ownFiberDestination;
+    gTLS.current_fiber_index = targetFiberIdx;
 
     CC_ASSERT(gTLS.previous_fiber_index != invalid_fiber && gTLS.current_fiber_index != invalid_fiber);
 
@@ -473,12 +471,12 @@ void td::Scheduler::cleanUpPrevFiber()
     switch (gTLS.previous_fiber_dest)
     {
     case fiber_destination_e::none:
-        return;
+        break;
     case fiber_destination_e::pool:
         // The fiber is being pooled, add it to the idle fibers
         {
-            bool success = mIdleFibers.enqueue(gTLS.previous_fiber_index);
-            CC_ASSERT(success);
+            bool bSuccess = mIdleFibers.enqueue(gTLS.previous_fiber_index);
+            CC_ASSERT(bSuccess);
         }
         break;
     case fiber_destination_e::waiting:
@@ -561,7 +559,7 @@ bool td::Scheduler::tryResumeFiber(fiber_index_t fiber)
     bool expected = true;
     auto const cas_success = std::atomic_compare_exchange_strong_explicit(&mFibers[fiber].is_waiting_cleaned_up, &expected, false, //
                                                                           std::memory_order_seq_cst, std::memory_order_relaxed);
-    if (CC_LIKELY(cas_success))
+    if CC_CONDITION_LIKELY (cas_success)
     {
         // is_waiting_cleaned_up was true, and is now exchanged to false
         // The resumable fiber is properly cleaned up and can be switched to
@@ -579,9 +577,9 @@ bool td::Scheduler::tryResumeFiber(fiber_index_t fiber)
     }
 }
 
-bool td::Scheduler::counterAddWaitingFiber(atomic_counter_t& counter, WaitingElement newElement, thread_index_t pinned_thread_index, int counter_target, int& out_counter_val)
+bool td::Scheduler::counterAddWaitingFiber(atomic_counter_t& counter, WaitingElement newElement, thread_index_t pinnedThreadIdx, int counterTarget, int& outCounterVal)
 {
-    CC_ASSERT(counter_target == 0 && "Non-zero waiting targets unimplemented");
+    CC_ASSERT(counterTarget == 0 && "Non-zero waiting targets unimplemented");
 
 #if TD_NEW_WAITING_FIBER_MECHANISM
 
@@ -589,9 +587,9 @@ bool td::Scheduler::counterAddWaitingFiber(atomic_counter_t& counter, WaitingEle
 
     // Check if already done
     int const counter_val = counter.count.load(std::memory_order_relaxed);
-    out_counter_val = counter_val;
+    outCounterVal = counter_val;
 
-    if (counter_target == counter_val)
+    if (counterTarget == counter_val)
     {
         // already done
         return true;
@@ -601,7 +599,7 @@ bool td::Scheduler::counterAddWaitingFiber(atomic_counter_t& counter, WaitingEle
     {
         // a new waiting fiber
 
-        thread_index_t const prevPinnedThreadIdx = mFibers[newElement.fiber].pinned_thread_index.exchange(pinned_thread_index);
+        thread_index_t const prevPinnedThreadIdx = mFibers[newElement.fiber].pinned_thread_index.exchange(pinnedThreadIdx);
         CC_ASSERT(prevPinnedThreadIdx == invalid_thread && "unexpected / race");
     }
     else
@@ -631,18 +629,18 @@ bool td::Scheduler::counterAddWaitingFiber(atomic_counter_t& counter, WaitingEle
 
         atomic_counter_t::waiting_fiber_t& slot = counter.waiting_fibers[i];
         slot.fiber_index = fiber_index;
-        slot.counter_target = counter_target;
-        slot.pinned_thread_index = pinned_thread_index;
+        slot.counterTarget = counterTarget;
+        slot.pinnedThreadIdx = pinnedThreadIdx;
         slot.in_use.store(false);
 
         // Check if already done
         auto const counter_val = counter.count.load(std::memory_order_relaxed);
-        out_counter_val = counter_val;
+        outCounterVal = counter_val;
 
         if (slot.in_use.load(std::memory_order_acquire))
             return false;
 
-        if (slot.counter_target == counter_val)
+        if (slot.counterTarget == counter_val)
         {
             expected = false;
             if (!std::atomic_compare_exchange_strong_explicit(&slot.in_use, &expected, true, //
@@ -675,12 +673,11 @@ void td::Scheduler::counterCheckWaitingFibers(atomic_counter_t& counter, int val
         auto lg = cc::lock_guard(counter.spinLockWaitingVector);
 
         // clear the previous
-        uint32_t const prevVectorSize = counter.waitingVector.numElements.exchange(0);
+        numReceivedFibers = counter.waitingVector.numElements.exchange(0);
 
-        numReceivedFibers = prevVectorSize;
         if (numReceivedFibers > 0)
         {
-            pReceivedWaitingElems = reinterpret_cast<WaitingElement*>(alloca(sizeof(pReceivedWaitingElems[0]) * prevVectorSize));
+            pReceivedWaitingElems = reinterpret_cast<WaitingElement*>(alloca(sizeof(pReceivedWaitingElems[0]) * numReceivedFibers));
             memcpy(pReceivedWaitingElems, counter.waitingVector.elements, numReceivedFibers * sizeof(pReceivedWaitingElems[0]));
         }
     }
@@ -748,7 +745,7 @@ void td::Scheduler::counterCheckWaitingFibers(atomic_counter_t& counter, int val
             continue;
 
         // If this slot's dependency is met
-        if (slot.counter_target == value)
+        if (slot.counterTarget == value)
         {
             // Lock the slot to be used by this thread
             bool expected = false;
@@ -764,18 +761,18 @@ void td::Scheduler::counterCheckWaitingFibers(atomic_counter_t& counter, int val
 
             // The waiting fiber is ready, and locked by this thread
 
-            if (slot.pinned_thread_index == invalid_thread)
+            if (slot.pinnedThreadIdx == invalid_thread)
             {
                 // The waiting fiber is not pinned to any thread, store it in the global _resumable fibers
-                bool success = mResumableFibers.enqueue(slot.fiber_index);
+                bool bSuccess = mResumableFibers.enqueue(slot.fiber_index);
 
                 // This should never fail, the container is large enough for all fibers in the system
-                CC_ASSERT(success);
+                CC_ASSERT(bSuccess);
             }
             else
             {
                 // The waiting fiber is pinned to a certain thread, store it there
-                auto& pinned_thread = mThreads[slot.pinned_thread_index];
+                auto& pinned_thread = mThreads[slot.pinnedThreadIdx];
 
 
                 auto lg = cc::lock_guard(pinned_thread.pinned_resumable_fibers_lock);
@@ -796,18 +793,18 @@ int32_t td::Scheduler::counterIncrement(atomic_counter_t& counter, int32_t amoun
 {
     CC_ASSERT(amount != 0 && "Must not increment counters by zero");
 
-    int previous = counter.count.fetch_add(amount);
-    int const new_val = previous + amount;
+    int const valuePrev = counter.count.fetch_add(amount);
+    int const valueCurr = valuePrev + amount;
 
-    CC_ASSERT(previous != ECounterVal_Released && "Increment on counter that was already released");
+    CC_ASSERT(valuePrev != ECounterVal_Released && "Increment on counter that was already released");
 
-    if (new_val == 0)
+    if (valueCurr == 0)
     {
         // amount must be != 0, meaning this is the only thread with this result
         counterCheckWaitingFibers(counter, 0);
     }
 
-    return new_val;
+    return valueCurr;
 }
 
 int32_t td::Scheduler::counterCompareAndSwap(atomic_counter_t& counter, int32_t comparand, int32_t exchange)
