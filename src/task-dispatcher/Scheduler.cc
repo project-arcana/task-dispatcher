@@ -1108,6 +1108,9 @@ bool td::releaseCounterIfOnZero(CounterHandle c)
 
 void td::submitTasks(CounterHandle c, cc::span<Task> tasks)
 {
+    if (tasks.empty())
+        return;
+
     Scheduler* const sched = gSchedulerOnThread;
     CC_ASSERT(sched != nullptr && "Called from outside scheduler, use td::launchScheduler() first");
     CC_ASSERT(c.isValid() && "td::sumitTasks() called with invalid counter handle");
