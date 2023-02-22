@@ -21,7 +21,7 @@
 #endif
 
 #ifdef TD_HAS_RICH_LOG
-#include <rich-log/StdOutLogger.hh>
+#include <rich-log/logger.hh>
 #endif
 
 #include <task-dispatcher/SchedulerConfig.hh>
@@ -289,7 +289,7 @@ TD_NATIVE_THREAD_FUNC_DECL entrypointWorkerThread(void* arg_void)
     {
 #ifdef TD_HAS_RICH_LOG
         // set the rich-log thread name (shown as a prefix)
-        rlog::setCurrentThreadName("td#%02u", worker_arg->index);
+        rlog::set_current_thread_name("td#%02u", worker_arg->index);
 #endif
 
         // set the thead name for debuggers
@@ -871,7 +871,7 @@ void td::Scheduler::start(td::Task const& main_task)
         native::createMainFiber(&gTLS.thread_fiber);
 
 #ifdef TD_HAS_RICH_LOG
-        rlog::setCurrentThreadName("td#00");
+        rlog::set_current_thread_name("td#00");
 #endif
     }
 
