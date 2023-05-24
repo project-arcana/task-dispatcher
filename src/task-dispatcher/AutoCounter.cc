@@ -12,7 +12,7 @@ td::AutoCounter::operator td::CounterHandle() &
     return handle;
 }
 
-int32_t td::waitForCounter(AutoCounter& autoCounter, bool pinned)
+int32_t td::waitForCounter(AutoCounter& autoCounter, bool bPinned)
 {
     if (!autoCounter.handle.isValid())
     {
@@ -21,7 +21,7 @@ int32_t td::waitForCounter(AutoCounter& autoCounter, bool pinned)
     }
 
     // perform real wait
-    int32_t const res = td::waitForCounter(autoCounter.handle, pinned);
+    int32_t const res = td::waitForCounter(autoCounter.handle, bPinned);
 
     // this call must not be raced on
     if (td::releaseCounterIfOnZero(autoCounter.handle))

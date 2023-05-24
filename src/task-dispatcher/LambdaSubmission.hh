@@ -40,10 +40,10 @@ void submitLambda(CounterHandle counter, F&& func)
 }
 
 // submit a task based on a function pointer taking optional userdata
-inline void submitFunction(CounterHandle counter, void (*pFunc)(void*), void* pUserdata = nullptr)
+inline void submitFunction(CounterHandle counter, void (*pFunc)(void*), void* pThreadStartstopFunc_Userdata = nullptr)
 {
     Task dispatch;
-    dispatch.initWithFunction(pFunc, pUserdata);
+    dispatch.initWithFunction(pFunc, pThreadStartstopFunc_Userdata);
     submitTasks(counter, cc::span{dispatch});
 }
 }

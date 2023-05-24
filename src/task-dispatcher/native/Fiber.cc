@@ -35,11 +35,11 @@ void td::native::createMainFiber(fiber_t* pOutFiber)
 
 void td::native::deleteMainFiber(fiber_t const&) { ::ConvertFiberToThread(); }
 
-void td::native::createFiber(fiber_t* pOutFiber, void (*pFiberEntry)(void*), void* pUserdata, size_t numBytesStack, cc::allocator*)
+void td::native::createFiber(fiber_t* pOutFiber, void (*pFiberEntry)(void*), void* pThreadStartstopFunc_Userdata, size_t numBytesStack, cc::allocator*)
 {
     CC_ASSERT(pOutFiber);
 
-    pOutFiber->native = ::CreateFiber(numBytesStack, static_cast<LPFIBER_START_ROUTINE>(pFiberEntry), pUserdata);
+    pOutFiber->native = ::CreateFiber(numBytesStack, static_cast<LPFIBER_START_ROUTINE>(pFiberEntry), pThreadStartstopFunc_Userdata);
     CC_ASSERT(pOutFiber->native != nullptr && "Fiber creation failed");
 }
 

@@ -91,7 +91,7 @@ namespace moodycamel { namespace details {
 	typedef std::uint32_t thread_id_t;
 	static const thread_id_t invalid_thread_id  = 0xFFFFFFFFU;
 	static const thread_id_t invalid_thread_id2 = 0xFFFFFFFEU;
-	static inline thread_id_t thread_id() { return rl::thread_index(); }
+	static inline thread_id_t thread_id() { return rl::threadIdx(); }
 } }
 #elif defined(_WIN32) || defined(__WINDOWS__) || defined(__WIN32__)
 // No sense pulling in windows.h in a header, we'll manually declare the function

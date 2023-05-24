@@ -47,7 +47,7 @@ struct alignas(NumBytesL1Cacheline) Task
     }
 
     // From function pointer and userdata void*
-    explicit Task(cc::function_ptr<void(void*)> func_ptr, void* pUserdata = nullptr) { initWithFunction(func_ptr, pUserdata); }
+    explicit Task(cc::function_ptr<void(void*)> func_ptr, void* pThreadStartstopFunc_Userdata = nullptr) { initWithFunction(func_ptr, pThreadStartstopFunc_Userdata); }
 
     // From a lambda of the form void()
     template <class T, cc::enable_if<std::is_invocable_r_v<void, T> && std::is_class_v<T>> = true>
@@ -108,10 +108,10 @@ struct alignas(NumBytesL1Cacheline) Task
     }
 
     // From function pointer of the form void(void*) and userdata void*
-    void initWithFunction(cc::function_ptr<void(void*)> pFunction, void* pUserdata = nullptr)
+    void initWithFunction(cc::function_ptr<void(void*)> pFunction, void* pThreadStartstopFunc_Userdata = nullptr)
     {
         memcpy(mBuffer, &pFunction, sizeof(pFunction));
-        memcpy(mBuffer + sizeof(pFunction), &pUserdata, sizeof(pUserdata));
+        memcpy(mBuffer + sizeof(pFunction), &pThreadStartstopFunc_Userdata, sizeof(pThreadStartstopFunc_Userdata));
 
         mInvokingFunction = [](std::byte* pBuffer)
         {
