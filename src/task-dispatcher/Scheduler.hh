@@ -24,9 +24,18 @@ TD_API int32_t releaseCounter(CounterHandle hCounter);
 // returns true if the counter was released
 TD_API bool releaseCounterIfOnZero(CounterHandle hCounter);
 
+enum class ETaskPriority : uint32_t
+{
+    Realtime = 0,
+    Default,
+
+    NUM_PRIORITIES
+};
+
 // submit multiple tasks to the scheduler for immediate execution
 // the counter is incremented by the amount of tasks and decremented once per completed task
-TD_API void submitTasks(CounterHandle hCounter, cc::span<Task> tasks);
+// bRealtime: high priority task
+TD_API void submitTasks(CounterHandle hCounter, cc::span<Task> tasks, ETaskPriority priority = ETaskPriority::Default);
 
 // waits until the counter reaches zero
 // bPinned: if true, the task entering the wait can only resume on the same OS thread

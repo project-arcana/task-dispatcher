@@ -26,5 +26,5 @@ template <class T, class Traits = ConcurrentQueueTraits>
 using BlockingConcurrentQueue = moodycamel::BlockingConcurrentQueue<T, Traits>;
 
 using ConcurrentQueueProducerToken = moodycamel::ProducerToken;
-using ConcurrentQueueConsumerTokenToken = moodycamel::ConsumerToken;
+using ConcurrentQueueConsumerToken = moodycamel::ConsumerToken;
 }

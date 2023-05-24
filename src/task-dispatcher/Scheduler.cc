@@ -149,6 +149,8 @@ struct WorkerFiberNode
 
     // index of the thread this fiber is pinned to, invalid_thread if unpinned
     std::atomic<thread_index_t> pinnedThreadIndex = {invalid_thread};
+
+    std::atomic<ETaskPriority> currentTaskPriority = {ETaskPriority::NUM_PRIORITIES};
 };
 
 struct ThreadLocalGlobals
@@ -183,6 +185,49 @@ Scheduler* gScheduler = nullptr;
 thread_local ThreadLocalGlobals gTLS;
 } // namespace
 
+#if TD_USE_MOODYCAMEL
+template <class T>
+using UsedMPMCQueue = td::ConcurrentQueue<T>;
+#else
+template <class T>
+using UsedMPMCQueue = cc::mpmc_queue<T>;
+#endif
+
+template <class T>
+struct PrioritizedMPMC
+{
+    UsedMPMCQueue<T> queues[(uint32_t)ETaskPriority::NUM_PRIORITIES];
+
+    bool Dequeue(T* pOutType, ETaskPriority* pOutPriority)
+    {
+        // go from 0 (highest) to slower prios
+        for (uint32_t i = 0; i < (uint32_t)ETaskPriority::NUM_PRIORITIES; ++i)
+        {
+            if (queues[i].try_dequeue(*pOutType))
+            {
+                *pOutPriority = ETaskPriority(i);
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    void Enqueue(T const& type, ETaskPriority prio)
+    {
+        CC_ASSERT((uint32_t)prio < (uint32_t)ETaskPriority::NUM_PRIORITIES);
+        bool bSuccess = queues[(uint32_t)prio].enqueue(type);
+        CC_ASSERT(bSuccess);
+    }
+
+    void EnqueueBatch(cc::span<T const> spValues, ETaskPriority prio)
+    {
+        CC_ASSERT((uint32_t)prio < (uint32_t)ETaskPriority::NUM_PRIORITIES);
+        bool bSuccess = queues[(uint32_t)prio].enqueue_bulk(spValues.data(), spValues.size());
+        CC_ASSERT(bSuccess);
+    }
+};
+
 struct Scheduler
 {
     /// Launch the scheduler with the given main task
@@ -196,18 +241,11 @@ struct Scheduler
     cc::alloc_array<WorkerFiberNode> mFibers;
     cc::alloc_array<CounterNode> mCounters;
 
-#if TD_USE_MOODYCAMEL
-    template <class T>
-    using UsedMPMCQueue = td::ConcurrentQueue<T>;
-#else
-    template <class T>
-    using UsedMPMCQueue = cc::mpmc_queue<T>;
-#endif
 
     // Queues
-    UsedMPMCQueue<Task> mTasks;
+    PrioritizedMPMC<Task> mTasks;
     UsedMPMCQueue<fiber_index_t> mIdleFibers;
-    UsedMPMCQueue<fiber_index_t> mResumableFibers;
+    PrioritizedMPMC<fiber_index_t> mResumableFibers;
     UsedMPMCQueue<counter_index_t> mFreeCounters;
 
     struct AtomicCounterHandleContent
@@ -227,7 +265,7 @@ struct Scheduler
     void yieldToFiber(fiber_index_t target_fiber, EFiberDestination own_destination);
     void cleanUpPrevFiber();
 
-    bool getNextTask(Task& task);
+    bool getNextTask(Task& task, ETaskPriority& outPrio);
     bool tryResumeFiber(fiber_index_t fiber);
 
     bool counterAddWaitingFiber(CounterNode& counter, WaitingElement newElement, thread_index_t pinnedThreadIndex, int* pOutCounterVal);
@@ -331,10 +369,14 @@ static void entrypointFiber(void* pArgVoid)
         Task task;
         while (!scheduler->mIsShuttingDown.load(std::memory_order_relaxed))
         {
-            if (scheduler->getNextTask(task))
+            ETaskPriority retrievedPrio;
+            if (scheduler->getNextTask(task, retrievedPrio))
             {
                 // work available, reset backoff
                 backoff_num_pauses = lc_min_backoff_pauses;
+
+                // store current task priority
+                scheduler->mFibers[gTLS.currentFiberIdx].currentTaskPriority.store(retrievedPrio);
 
                 // Received a task, execute it
                 task.runTask();
@@ -471,7 +513,7 @@ void td::Scheduler::cleanUpPrevFiber()
     gTLS.previousFiberDest = EFiberDestination::None;
 }
 
-bool td::Scheduler::getNextTask(td::Task& task)
+bool td::Scheduler::getNextTask(td::Task& task, ETaskPriority& outPrio)
 {
     // Locally pinned, resumable fibers first
     while (true)
@@ -509,20 +551,22 @@ bool td::Scheduler::getNextTask(td::Task& task)
     while (true)
     {
         fiber_index_t resumableFiberIdx;
-        if (!mResumableFibers.try_dequeue(resumableFiberIdx))
+        ETaskPriority fiberPriority;
+        if (!mResumableFibers.Dequeue(&resumableFiberIdx, &fiberPriority))
         {
             // got no  global resumable fibers, fall through to global pending tasks
             break;
         }
 
+        // in case other things were done with this fiber, re-set the priority
+        mFibers[resumableFiberIdx].currentTaskPriority.store(fiberPriority);
 
         if (!tryResumeFiber(resumableFiberIdx))
         {
             // Received fiber is not cleaned up yet, re-enqueue (very rare)
             // This should only happen if mResumableFibers is almost empty, and
             // the latency impact is low in those cases
-            bool success = mResumableFibers.enqueue(resumableFiberIdx);
-            CC_ASSERT(success);
+            mResumableFibers.Enqueue(resumableFiberIdx, fiberPriority);
 
             // signal the global event
             native::signalEvent(mEventWorkAvailable);
@@ -533,8 +577,8 @@ bool td::Scheduler::getNextTask(td::Task& task)
         // stay in while-loop to retry for global resumables
     }
 
-    // (New) pending tasks
-    return mTasks.try_dequeue(task);
+    // New pending tasks (prioritized)
+    return mTasks.Dequeue(&task, &outPrio);
 }
 
 bool td::Scheduler::tryResumeFiber(fiber_index_t fiber)
@@ -622,16 +666,15 @@ void td::Scheduler::counterCheckWaitingFibers(CounterNode& counter, int value)
         {
             // this element represents a waiting fiber
             auto const fiberIdx = waitingElem.fiber;
+            WorkerFiberNode& fiberNode = mFibers[fiberIdx];
 
-            thread_index_t const pinnedThreadIdx = mFibers[fiberIdx].pinnedThreadIndex.exchange(invalid_thread);
+            ETaskPriority const currentTaskPrio = fiberNode.currentTaskPriority.load();
+            thread_index_t const pinnedThreadIdx = fiberNode.pinnedThreadIndex.exchange(invalid_thread);
 
             if (pinnedThreadIdx == invalid_thread)
             {
                 // The waiting fiber is not pinned to any thread, store it in the global resumable fibers
-                bool success = mResumableFibers.enqueue(fiberIdx);
-
-                // This should never fail, the container is large enough for all fibers in the system
-                CC_ASSERT(success);
+                mResumableFibers.Enqueue(fiberIdx, currentTaskPrio);
             }
             else
             {
@@ -974,7 +1017,7 @@ bool td::releaseCounterIfOnZero(CounterHandle hCounter)
     return true;
 }
 
-void td::submitTasks(CounterHandle hCounter, cc::span<Task> tasks)
+void td::submitTasks(CounterHandle hCounter, cc::span<Task> tasks, ETaskPriority priority)
 {
     if (tasks.empty())
         return;
@@ -993,8 +1036,10 @@ void td::submitTasks(CounterHandle hCounter, cc::span<Task> tasks)
     {
         tasks[i].mMetadata = counter_index;
     }
-    bool const bSuccess = sched->mTasks.enqueue_bulk(tasks.data(), tasks.size());
-    CC_RUNTIME_ASSERT(bSuccess && "Failed to enqueue"); // this is an alloc fail
+
+    // batch enqueue
+    sched->mTasks.EnqueueBatch(tasks, priority);
+
 #else
     // TODO: Multi-enqueue
     bool bSuccess = true;

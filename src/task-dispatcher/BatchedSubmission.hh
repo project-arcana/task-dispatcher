@@ -21,7 +21,7 @@ namespace td
 {
 // submits multiple tasks calling a lambda "void f(uint32_t i)" from 0 to num - 1
 template <class F>
-void submitNumbered(CounterHandle counter, F&& func, uint32_t numElements, cc::allocator* scratch)
+void submitNumbered(CounterHandle counter, F&& func, uint32_t numElements, cc::allocator* scratch, ETaskPriority priority = ETaskPriority::Default)
 {
     static_assert(std::is_invocable_v<F, unsigned>, "function must be invocable with index argument");
     static_assert(std::is_same_v<std::invoke_result_t<F, uint32_t>, void>, "return must be void");
@@ -33,7 +33,7 @@ void submitNumbered(CounterHandle counter, F&& func, uint32_t numElements, cc::a
         tasks[i].initWithLambda([=] { func(i); });
     }
 
-    td::submitTasks(counter, cc::span{tasks, numElements});
+    td::submitTasks(counter, cc::span{tasks, numElements}, priority);
     scratch->delete_array_sized(tasks, numElements);
 }
 
@@ -41,7 +41,7 @@ void submitNumbered(CounterHandle counter, F&& func, uint32_t numElements, cc::a
 // maxNumBatches: maximum amount of batches to partition the range into
 // returns amount of batches
 template <class F>
-uint32_t submitBatched(CounterHandle counter, F&& func, uint32_t numElements, uint32_t maxNumBatches, cc::allocator* scratch)
+uint32_t submitBatched(CounterHandle counter, F&& func, uint32_t numElements, uint32_t maxNumBatches, cc::allocator* scratch, ETaskPriority priority = ETaskPriority::Default)
 {
     static_assert(std::is_invocable_v<F, uint32_t, uint32_t, uint32_t>, "function must be invocable with element start, end, and index argument");
 
@@ -63,7 +63,7 @@ uint32_t submitBatched(CounterHandle counter, F&& func, uint32_t numElements, ui
         tasks[batch].initWithLambda([=] { func(start, end, batch); });
     }
 
-    td::submitTasks(counter, cc::span{tasks, numBatches});
+    td::submitTasks(counter, cc::span{tasks, numBatches}, priority);
     scratch->delete_array_sized(tasks, numBatches);
     return numBatches;
 }
@@ -72,7 +72,7 @@ uint32_t submitBatched(CounterHandle counter, F&& func, uint32_t numElements, ui
 // data in 'values' must stay alive until all tasks ran through
 // returns amount of batches
 template <class T, class F>
-uint32_t submitBatchedOnArray(CounterHandle counter, F&& func, cc::span<T> values, uint32_t maxNumBatches, cc::allocator* scratch)
+uint32_t submitBatchedOnArray(CounterHandle counter, F&& func, cc::span<T> values, uint32_t maxNumBatches, cc::allocator* scratch, ETaskPriority priority = ETaskPriority::Default)
 {
     static_assert(std::is_invocable_v<F, T&, uint32_t, uint32_t>, "function must be invocable with element reference");
     static_assert(std::is_same_v<std::invoke_result_t<F, T&, uint32_t, uint32_t>, void>, "return must be void");
@@ -90,7 +90,7 @@ uint32_t submitBatchedOnArray(CounterHandle counter, F&& func, cc::span<T> value
                 func(pValues[i], i, batchIdx);
             }
         },
-        numValues, maxNumBatches, scratch);
+        numValues, maxNumBatches, scratch, priority);
 }
 
 }
