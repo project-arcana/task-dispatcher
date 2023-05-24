@@ -230,7 +230,7 @@ struct Scheduler
     bool getNextTask(Task& task);
     bool tryResumeFiber(fiber_index_t fiber);
 
-    bool counterAddWaitingFiber(CounterNode& counter, WaitingElement newElement, thread_index_t pinnedThreadIndex, int counter_target, int* pOutCounterVal);
+    bool counterAddWaitingFiber(CounterNode& counter, WaitingElement newElement, thread_index_t pinnedThreadIndex, int* pOutCounterVal);
     void counterCheckWaitingFibers(CounterNode& counter, int value);
 
     int32_t counterIncrement(CounterNode& counter, int32_t amount = 1);
@@ -473,65 +473,67 @@ void td::Scheduler::cleanUpPrevFiber()
 
 bool td::Scheduler::getNextTask(td::Task& task)
 {
-    // Sleeping fibers with tasks that had their dependencies resolved in the meantime
-    // have the highest priority
-
-    // Locally pinned fibers first
+    // Locally pinned, resumable fibers first
+    while (true)
     {
-        auto& local_thread = mThreads[gTLS.threadIdx];
-        fiber_index_t resumable_fiber_index;
-        bool got_resumable;
+        auto& localThread = mThreads[gTLS.threadIdx];
+        fiber_index_t resumableFiberIdx;
+        bool bGotResumable;
         {
-            auto lg = cc::lock_guard(local_thread.pinnedResumableFibersLock);
-            got_resumable = local_thread.pinnedResumableFibers.dequeue(resumable_fiber_index);
+            auto lg = cc::lock_guard(localThread.pinnedResumableFibersLock);
+            bGotResumable = localThread.pinnedResumableFibers.dequeue(resumableFiberIdx);
         }
 
-        if (got_resumable)
-        {
-            if (tryResumeFiber(resumable_fiber_index))
-            {
-                // Successfully resumed (and returned)
-            }
-            else
-            {
-                // Received fiber is not cleaned up yet, re-enqueue (very rare)
-                {
-                    auto lg = cc::lock_guard(local_thread.pinnedResumableFibersLock);
-                    local_thread.pinnedResumableFibers.enqueue(resumable_fiber_index);
-                }
+        // got no local pinned fibers, fall through to global resumable fibers
+        if (!bGotResumable)
+            break;
 
-                // signal the global event
-                native::signalEvent(mEventWorkAvailable);
+        if (!tryResumeFiber(resumableFiberIdx))
+        {
+            // Received fiber is not cleaned up yet, re-enqueue (very rare)
+            {
+                auto lg = cc::lock_guard(localThread.pinnedResumableFibersLock);
+                localThread.pinnedResumableFibers.enqueue(resumableFiberIdx);
             }
-            // Fallthrough to global resumables
+
+            // signal the global event
+            native::signalEvent(mEventWorkAvailable);
+            break;
         }
+
+        // Successfully resumed (and returned)
+        // stay in while-loop to retry for local pinned resumables
     }
 
     // Global resumable fibers
+    while (true)
     {
-        fiber_index_t resumable_fiber_index;
-        if (mResumableFibers.try_dequeue(resumable_fiber_index))
+        fiber_index_t resumableFiberIdx;
+        if (!mResumableFibers.try_dequeue(resumableFiberIdx))
         {
-            if (tryResumeFiber(resumable_fiber_index))
-            {
-                // Successfully resumed (and returned)
-            }
-            else
-            {
-                // Received fiber is not cleaned up yet, re-enqueue (very rare)
-                // This should only happen if mResumableFibers is almost empty, and
-                // the latency impact is low in those cases
-                bool success = mResumableFibers.enqueue(resumable_fiber_index);
-                CC_ASSERT(success);
-
-                // signal the global event
-                native::signalEvent(mEventWorkAvailable);
-            }
-            // Fallthrough to global pending Chase-Lev / MPMC
+            // got no  global resumable fibers, fall through to global pending tasks
+            break;
         }
+
+
+        if (!tryResumeFiber(resumableFiberIdx))
+        {
+            // Received fiber is not cleaned up yet, re-enqueue (very rare)
+            // This should only happen if mResumableFibers is almost empty, and
+            // the latency impact is low in those cases
+            bool success = mResumableFibers.enqueue(resumableFiberIdx);
+            CC_ASSERT(success);
+
+            // signal the global event
+            native::signalEvent(mEventWorkAvailable);
+            break;
+        }
+
+        // Successfully resumed (and returned)
+        // stay in while-loop to retry for global resumables
     }
 
-    // Pending tasks
+    // (New) pending tasks
     return mTasks.try_dequeue(task);
 }
 
@@ -558,17 +560,15 @@ bool td::Scheduler::tryResumeFiber(fiber_index_t fiber)
     }
 }
 
-bool td::Scheduler::counterAddWaitingFiber(CounterNode& counter, WaitingElement newElement, thread_index_t pinnedThreadIdx, int counterTarget, int* pOutCounterVal)
+bool td::Scheduler::counterAddWaitingFiber(CounterNode& counter, WaitingElement newElement, thread_index_t pinnedThreadIdx, int* pOutCounterVal)
 {
-    CC_ASSERT(counterTarget == 0 && "Non-zero waiting targets unimplemented");
-
     auto lg = cc::lock_guard(counter.spinLockWaitingVector);
 
     // Check if already done
     int const counterVal = counter.count.load(std::memory_order_relaxed);
     *pOutCounterVal = counterVal;
 
-    if (counterTarget == counterVal)
+    if (counterVal == 0)
     {
         // already done
         return true;
@@ -981,7 +981,7 @@ void td::submitTasks(CounterHandle hCounter, cc::span<Task> tasks)
 
     Scheduler* const sched = gSchedulerOnThread;
     CC_ASSERT(sched != nullptr && "Called from outside scheduler, use td::launchScheduler() first");
-    CC_ASSERT(hCounter.isValid() && "td::sumitTasks() called with invalid counter handle");
+    CC_ASSERT(hCounter.isValid() && "td::submitTasks() called with invalid counter handle");
 
     size_t const numTasks = tasks.size();
 
@@ -1029,7 +1029,7 @@ int32_t td::waitForCounter(CounterHandle hCounter, bool bPinned)
     WaitingElement waitElem = {};
     waitElem.fiber = gTLS.currentFiberIdx;
 
-    if (sched->counterAddWaitingFiber(sched->mCounters[counterIdx], waitElem, bPinned ? gTLS.threadIdx : invalid_thread, 0, &counterValBeforeWait))
+    if (sched->counterAddWaitingFiber(sched->mCounters[counterIdx], waitElem, bPinned ? gTLS.threadIdx : invalid_thread, &counterValBeforeWait))
     {
         // Already done - resume immediately
     }
@@ -1094,7 +1094,7 @@ int32_t td::createCounterDependency(CounterHandle hCounterToModify, CounterHandl
     WaitingElement waitElem = {};
     waitElem.counter = counterToModifyIdx;
 
-    if (sched->counterAddWaitingFiber(sched->mCounters[counterToDependUponIdx], waitElem, invalid_thread, 0, &counterToDependUponValueBeforeWait))
+    if (sched->counterAddWaitingFiber(sched->mCounters[counterToDependUponIdx], waitElem, invalid_thread, &counterToDependUponValueBeforeWait))
     {
         // immediately done, decrement hCounterToModify again
         sched->counterIncrement(sched->mCounters[counterToModifyIdx], -1);
