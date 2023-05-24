@@ -15,7 +15,7 @@ option(TD_NO_WAITS "If enabled, worker threads do not wait/sleep when idle, mini
 # define library
 
 file(GLOB_RECURSE SOURCES "src/*.cc")
-file(GLOB_RECURSE HEADERS "src/*.hh")
+file(GLOB_RECURSE HEADERS "src/*.hh" "src/*.h")
 
 arcana_add_library(TD task-dispatcher SOURCES HEADERS)
 
