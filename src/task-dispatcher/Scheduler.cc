@@ -442,7 +442,7 @@ fiber_index_t td::Scheduler::acquireFreeFiber()
     fiber_index_t res;
     for (int attempt = 0;; ++attempt)
     {
-        if (mIdleFibers.dequeue(res))
+        if (mIdleFibers.dequeue(&res))
             return res;
 
 #if TD_WARN_ON_DEADLOCKS
@@ -529,7 +529,7 @@ bool td::Scheduler::getNextTask(td::Task& task)
     // Global resumable fibers
     {
         fiber_index_t resumable_fiber_index;
-        if (mResumableFibers.dequeue(resumable_fiber_index))
+        if (mResumableFibers.dequeue(&resumable_fiber_index))
         {
             if (tryResumeFiber(resumable_fiber_index))
             {
@@ -551,7 +551,7 @@ bool td::Scheduler::getNextTask(td::Task& task)
     }
 
     // Pending tasks
-    return mTasks.dequeue(task);
+    return mTasks.dequeue(&task);
 }
 
 bool td::Scheduler::tryResumeFiber(fiber_index_t fiber)
@@ -1057,7 +1057,7 @@ td::CounterHandle td::acquireCounter()
     CC_ASSERT(sched != nullptr && "Called from outside scheduler, use td::launchScheduler() first");
 
     counter_index_t free_counter;
-    auto success = sched->mFreeCounters.dequeue(free_counter);
+    auto success = sched->mFreeCounters.dequeue(&free_counter);
     CC_RUNTIME_ASSERT(success && "No free counters available, consider increasing config.maxNumCounters");
 
     sched->mCounters[free_counter].reset();
