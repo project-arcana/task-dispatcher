@@ -35,11 +35,11 @@ void td::native::createMainFiber(fiber_t* pOutFiber)
 
 void td::native::deleteMainFiber(fiber_t const&) { ::ConvertFiberToThread(); }
 
-void td::native::createFiber(fiber_t* pOutFiber, void (*pFiberEntry)(void*), void* pThreadStartstopFunc_Userdata, size_t numBytesStack, cc::allocator*)
+void td::native::createFiber(fiber_t* pOutFiber, void (*pFiberEntry)(void*), void* pUserdata, size_t numBytesStack, cc::allocator*)
 {
     CC_ASSERT(pOutFiber);
 
-    pOutFiber->native = ::CreateFiber(numBytesStack, static_cast<LPFIBER_START_ROUTINE>(pFiberEntry), pThreadStartstopFunc_Userdata);
+    pOutFiber->native = ::CreateFiber(numBytesStack, static_cast<LPFIBER_START_ROUTINE>(pFiberEntry), pUserdata);
     CC_ASSERT(pOutFiber->native != nullptr && "Fiber creation failed");
 }
 
@@ -104,7 +104,7 @@ void td::native::deleteFiber(fiber_t const& fib, cc::allocator* alloc) { alloc->
 
 void td::native::switchToFiber(fiber_t const& destFiber, fiber_t const& srcFiber)
 {
-    if (::_setjmp(srcFiber.jmp) == 0)
+    if (::_setjmp(const_cast<fiber_t&>(srcFiber).jmp) == 0)
         ::_longjmp(const_cast<fiber_t&>(destFiber).jmp, 1);
 }
 

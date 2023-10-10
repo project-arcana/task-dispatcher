@@ -39,7 +39,7 @@ TD_API void createMainFiber(fiber_t* pOutFiber);
 
 TD_API void deleteMainFiber(fiber_t const& fiber);
 
-TD_API void createFiber(fiber_t* pOutFiber, void (*pFiberEntry)(void*), void* pThreadStartstopFunc_Userdata, size_t numBytesStack, cc::allocator* pAlloc);
+TD_API void createFiber(fiber_t* pOutFiber, void (*pFiberEntry)(void*), void* pUserdata, size_t numBytesStack, cc::allocator* pAlloc);
 
 TD_API void deleteFiber(fiber_t const& fiber, cc::allocator* pAllocator);
 
