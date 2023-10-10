@@ -105,7 +105,7 @@ void td::native::deleteFiber(fiber_t const& fib, cc::allocator* alloc) { alloc->
 void td::native::switchToFiber(fiber_t const& destFiber, fiber_t const& srcFiber)
 {
     if (::_setjmp(srcFiber.jmp) == 0)
-        ::_longjmp(destFiber.jmp, 1);
+        ::_longjmp(const_cast<fiber_t&>(destFiber).jmp, 1);
 }
 
 #endif
