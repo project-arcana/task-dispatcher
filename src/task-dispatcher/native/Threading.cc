@@ -283,7 +283,7 @@ void td::native::destroyEvent(event_t& /*eventId*/)
     // No op
 }
 
-bool td::native::waitForEvent(event_t& eventId, int64_t milliseconds)
+bool td::native::waitForEvent(event_t& eventId, uint32_t milliseconds)
 {
     pthread_mutex_lock(&eventId.mutex);
 
@@ -297,9 +297,10 @@ bool td::native::waitForEvent(event_t& eventId, int64_t milliseconds)
     else
     {
         timespec waittime{};
-        waittime.tv_sec = milliseconds / mills_in_sec;
-        milliseconds -= waittime.tv_sec * mills_in_sec;
-        waittime.tv_nsec = milliseconds * mills_in_sec;
+        int64_t milliseconds_i64 = int64_t(milliseconds);
+        waittime.tv_sec = milliseconds_i64 / mills_in_sec;
+        milliseconds_i64 -= waittime.tv_sec * mills_in_sec;
+        waittime.tv_nsec = milliseconds_i64 * mills_in_sec;
         auto const wait_res = pthread_cond_timedwait(&eventId.cond, &eventId.mutex, &waittime);
         event_was_signalled = wait_res != ETIMEDOUT;
     }
