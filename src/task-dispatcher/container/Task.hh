@@ -61,7 +61,7 @@ struct alignas(NumBytesL1Cacheline) TTask
 
         if constexpr (sizeof(T) <= sizeof(mBuffer))
         {
-            static_assert(alignof(T) <= alignof(Task), "Lambda misaligned");
+            static_assert(alignof(T) <= alignof(TTask), "Lambda misaligned");
 
             T* const pWrittenLambda = new (cc::placement_new, mBuffer) T(cc::move(lambda));
             // assert below should never happen
