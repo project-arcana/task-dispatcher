@@ -21,6 +21,15 @@ struct VersionRing;
 
 struct CounterHandle;
 struct AutoCounter;
-struct Task;
+
+template <bool AllowHeapAlloc, class... Args>
+struct TTask;
+
+#ifdef TD_ALLOW_HEAP_TASKS
+using Task = TTask<true>;
+#else
+using Task = TTask<false>;
+#endif
+
 struct SchedulerConfig;
 }
