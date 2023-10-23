@@ -1,16 +1,15 @@
 #pragma once
 
-#include <cstddef>
-#include <cstdint>
+#include <stdint.h>
 
 #include "api.hh"
 
-namespace td::system
+namespace td
 {
-// == Compile time architecture info ==
-inline size_t constexpr l1_cacheline_size = 64; // std::hardware_destructive_interference_size assumption, verified in .cc
+// Returns amount of logical CPU cores
+TD_API uint32_t getNumLogicalCPUCores() noexcept;
 
-// == Run time system info ==
-[[nodiscard]] TD_API uint32_t num_logical_cores() noexcept;  // std::thread::hardware_concurrency
-[[nodiscard]] TD_API uint32_t num_physical_cores() noexcept; // platform-specific, expensive on Windows
+// Returns amount of physical CPU cores (platform-specific, expensive on Windows)
+// WARNING: This is inaccurate on Linux for non-Intel and doesn't account for hyperthreading being disabled (but available)
+[[deprecated("Inaccurate, do not use")]] TD_API uint32_t getNumPhysicalCPUCores() noexcept;
 }
