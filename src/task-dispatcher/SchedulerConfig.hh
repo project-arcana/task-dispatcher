@@ -33,6 +33,10 @@ struct TD_API SchedulerConfig
     // maximum amount of fibers waiting on a single counter
     uint32_t maxNumWaitingFibersPerCounter = 256;
 
+    // maximum amount of milliseconds a worker thread will OS-sleep when idle
+    // lower numbers will improve response times of workers at the cost of more background CPU utlization
+    uint32_t maxNumMillisecondsSleepOnIdle = 10;
+
     // whether to lock the main and worker threads to logical cores
     // can degrade performance on a multitasking (desktop) OS depending on other process load
     // recommended on console-like plattforms, embedded systems

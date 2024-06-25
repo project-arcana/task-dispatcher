@@ -404,7 +404,7 @@ static void entrypointFiber(void* pArgVoid)
                     // reached max backoff, wait for global event
 
                     // wait until the global event is signalled, with timeout
-                    bool signalled = td::native::waitForEvent(scheduler->mEventWorkAvailable, 10);
+                    bool signalled = td::native::waitForEvent(scheduler->mEventWorkAvailable, scheduler->mConfig.maxNumMillisecondsSleepOnIdle);
 
 #if TD_WARN_ON_WAITING_TIMEOUTS
                     if (!signalled)
