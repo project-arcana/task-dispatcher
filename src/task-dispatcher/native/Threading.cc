@@ -92,7 +92,11 @@ bool td::native::createThread(size_t stack_size, thread_start_func_t start_routi
 
 void td::native::endCurrentThread() { ::_endthreadex(0); }
 
-void td::native::joinThread(thread_t thread) { ::WaitForSingleObject(thread.handle, INFINITE); }
+void td::native::joinThread(thread_t thread)
+{
+    ::WaitForSingleObject(thread.handle, INFINITE);
+    ::CloseHandle(thread.handle);
+}
 
 td::native::thread_t td::native::getCurrentThread() { return thread_t{::GetCurrentThread(), ::GetCurrentThreadId()}; }
 
