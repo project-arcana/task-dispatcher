@@ -47,6 +47,9 @@
 // Warn if a deadlock is likely
 #define TD_WARN_ON_DEADLOCKS true
 
+// Always spinwait if the current thread has a blocked pinned fiber
+#define TD_SPINWAIT_IF_THREAD_BLOCKED true
+
 // If true, never wait for events and leave worker threads always spinning (minimized latency, cores locked to 100%)
 #ifdef TD_NO_WAITS
 #define TD_ALWAYS_SPINWAIT true
@@ -163,7 +166,7 @@ struct ThreadLocalGlobals
     EFiberDestination previousFiberDest = EFiberDestination::None;
 
     thread_index_t threadIdx = invalid_thread; // index of this thread in the scheduler::mThreads
-    bool bIsThreadWaiting = false;
+    bool bIsThreadPinnedWaiting = false;       // true while this thread has an ongoing pinned wait
 
     void reset()
     {
@@ -172,7 +175,7 @@ struct ThreadLocalGlobals
         previousFiberIdx = invalid_fiber;
         previousFiberDest = EFiberDestination::None;
         threadIdx = invalid_thread;
-        bIsThreadWaiting = false;
+        bIsThreadPinnedWaiting = false;
     }
 };
 
@@ -399,20 +402,32 @@ static void entrypointFiber(void* pArgVoid)
                 _mm_pause();
 #else // !TD_ALWAYS_SPINWAIT
       // only perform OS wait if backoff is at maximum and this thread is not waiting
-                if (backoff_num_pauses == lc_max_backoff_pauses && !gTLS.bIsThreadWaiting)
+
+#if TD_SPINWAIT_IF_THREAD_BLOCKED
+                // only allow sleeping if the current thread isn't pinned-waiting
+                bool const bSleepAllowed = backoff_num_pauses >= lc_max_backoff_pauses && !gTLS.bIsThreadPinnedWaiting;
+#else
+                bool const bSleepAllowed = backoff_num_pauses >= lc_max_backoff_pauses;
+#endif
+
+                if (bSleepAllowed)
                 {
                     // reached max backoff, wait for global event
 
                     // wait until the global event is signalled, with timeout
-                    bool signalled = td::native::waitForEvent(scheduler->mEventWorkAvailable, scheduler->mConfig.maxNumMillisecondsSleepOnIdle);
+                    bool const signalled = td::native::waitForEvent(scheduler->mEventWorkAvailable, scheduler->mConfig.maxNumMillisecondsSleepOnIdle);
+
+                    if (signalled)
+                    {
+                        // we got signalled - reset the backoff pauses since we might spuriously miss the new tasks/resumable fibers for a few iterations
+                        backoff_num_pauses = lc_min_backoff_pauses;
+                    }
 
 #if TD_WARN_ON_WAITING_TIMEOUTS
                     if (!signalled)
                     {
                         fprintf(stderr, "[td] Scheduler warning: Work event wait timed out\n");
                     }
-#else  // !TD_WARN_ON_WAITING_TIMEOUTS
-                    (void)signalled;
 #endif // TD_WARN_ON_WAITING_TIMEOUTS
                 }
                 else
@@ -675,6 +690,8 @@ void td::Scheduler::counterCheckWaitingFibers(CounterNode& counter, int value)
             {
                 // The waiting fiber is not pinned to any thread, store it in the global resumable fibers
                 mResumableFibers.Enqueue(fiberIdx, currentTaskPrio);
+
+                native::signalEvent(mEventWorkAvailable);
             }
             else
             {
@@ -683,6 +700,8 @@ void td::Scheduler::counterCheckWaitingFibers(CounterNode& counter, int value)
 
                 auto lg = cc::lock_guard(pinned_thread.pinnedResumableFibersLock);
                 pinned_thread.pinnedResumableFibers.enqueue(fiberIdx);
+
+                native::signalEvent(mEventWorkAvailable);
             }
         }
         else
@@ -697,8 +716,6 @@ void td::Scheduler::counterCheckWaitingFibers(CounterNode& counter, int value)
             counterIncrement(counter, -1);
         }
     }
-
-    native::signalEvent(mEventWorkAvailable);
 }
 
 int32_t td::Scheduler::counterIncrement(CounterNode& counter, int32_t amount)
@@ -1067,7 +1084,7 @@ int32_t td::waitForCounter(CounterHandle hCounter, bool bPinned)
     // The current fiber is now waiting, but not yet cleaned up
     sched->mFibers[gTLS.currentFiberIdx].bIsWaitingCleanedUp.store(false, std::memory_order_release);
 
-    gTLS.bIsThreadWaiting = true;
+    gTLS.bIsThreadPinnedWaiting = bPinned;
 
     int counterValBeforeWait = -1;
 
@@ -1084,7 +1101,7 @@ int32_t td::waitForCounter(CounterHandle hCounter, bool bPinned)
         sched->yieldToFiber(sched->acquireFreeFiber(), EFiberDestination::Waiting);
     }
 
-    gTLS.bIsThreadWaiting = false;
+    gTLS.bIsThreadPinnedWaiting = false;
 
     // Either the counter was already on target, or this fiber has been awakened because it is now on target,
     // return execution
