@@ -2,10 +2,12 @@
 
 #include <stdint.h>
 
+#include <task-dispatcher/common/api.hh>
+
 namespace td
 {
 // Handle to a counter, the core synchronization mechanism
-struct CounterHandle
+struct TD_API CounterHandle
 {
     uint32_t _value = 0;
 
