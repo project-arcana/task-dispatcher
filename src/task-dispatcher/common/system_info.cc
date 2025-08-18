@@ -12,43 +12,54 @@
 #include <unistd.h>
 #endif
 
+#include <task-dispatcher/container/Task.hh>
+
 #ifdef CC_COMPILER_MSVC
-static_assert(td::system::l1_cacheline_size == std::hardware_destructive_interference_size, "L1 Cacheline size assumption wrong");
+static_assert(td::NumBytesL1Cacheline == std::hardware_destructive_interference_size, "L1 Cacheline size assumption wrong");
 #else
 // Clang doesn't support std::hardware_destructive_interference yet
 #endif
 
-uint32_t td::system::num_logical_cores() noexcept { return std::thread::hardware_concurrency(); }
+uint32_t td::getNumLogicalCPUCores() noexcept { return std::thread::hardware_concurrency(); }
 
-uint32_t td::system::num_physical_cores() noexcept
+uint32_t td::getNumPhysicalCPUCores() noexcept
 {
 #ifdef CC_OS_WINDOWS
-    cc::array<std::byte> buffer;
-    auto const to_ptr = [](std::byte* raw) { return reinterpret_cast<SYSTEM_LOGICAL_PROCESSOR_INFORMATION_EX*>(raw); };
-    ::DWORD length = 0;
+    std::byte buffer_stack[4096];
+    cc::array<std::byte> buffer_heap;
+    DWORD buffer_length = CC_COUNTOF(buffer_stack);
 
-    while (true)
+    SYSTEM_LOGICAL_PROCESSOR_INFORMATION_EX* buffer_data = reinterpret_cast<SYSTEM_LOGICAL_PROCESSOR_INFORMATION_EX*>(&buffer_stack[0]);
+
+    if (!GetLogicalProcessorInformationEx(RelationAll, buffer_data, &buffer_length))
     {
-        auto const rc = ::GetLogicalProcessorInformationEx(RelationAll, to_ptr(buffer.data()), &length);
+        if (GetLastError() == ERROR_INSUFFICIENT_BUFFER)
+        {
+            // stack buffer insufficient, allocate
+            buffer_heap = cc::array<std::byte>::uninitialized(buffer_length);
+            buffer_data = reinterpret_cast<SYSTEM_LOGICAL_PROCESSOR_INFORMATION_EX*>(buffer_heap.data());
 
-        if (rc)
-            break;
-
-        if (::GetLastError() == ERROR_INSUFFICIENT_BUFFER)
-            buffer = buffer.uninitialized(length);
+            if (!GetLogicalProcessorInformationEx(RelationAll, buffer_data, &buffer_length))
+            {
+                // unexpected
+                return 0;
+            }
+        }
         else
+        {
+            // other error
             return 0;
+        }
     }
 
-    auto res_num_cores = 0u;
-
-    auto prev_processor_info_size = 0u;
-    std::byte* cursor = buffer.data();
-    auto cursor_offset = 0u;
-    while (cursor_offset < length)
+    uint32_t res_num_cores = 0u;
+    uint32_t prev_processor_info_size = 0u;
+    std::byte const* cursor = reinterpret_cast<std::byte*>(buffer_data);
+    uint32_t cursor_offset = 0u;
+    while (cursor_offset < buffer_length)
     {
         cursor += prev_processor_info_size;
-        auto const* const info_struct = to_ptr(cursor);
+        auto const* const info_struct = reinterpret_cast<SYSTEM_LOGICAL_PROCESSOR_INFORMATION_EX const*>(cursor);
 
         if (info_struct->Relationship == RelationProcessorCore)
             ++res_num_cores;
@@ -59,6 +70,8 @@ uint32_t td::system::num_physical_cores() noexcept
 
     return res_num_cores;
 #elif defined(CC_OS_LINUX)
+    // WARNING: This is Intel only and also does not account for whether hyperthreading is actually enabled, only whether it's possible on the CPU
+    // do not use
     uint32_t registers[4];
     __asm__ __volatile__("cpuid " : "=a"(registers[0]), "=b"(registers[1]), "=c"(registers[2]), "=d"(registers[3]) : "a"(1), "c"(0));
 
@@ -66,9 +79,9 @@ uint32_t td::system::num_physical_cores() noexcept
     bool const has_hyperthreading = feature_set_flags & (1 << 28);
 
     if (has_hyperthreading)
-        return num_logical_cores() / 2;
+        return getNumLogicalCPUCores() / 2;
     else
-        return num_logical_cores();
+        return getNumLogicalCPUCores();
 #else
 #error "Unsupported operating system"
 #endif
