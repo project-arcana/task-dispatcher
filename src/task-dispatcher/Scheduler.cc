@@ -24,6 +24,7 @@
 #include <rich-log/logger.hh>
 #endif
 
+#include <task-dispatcher/CounterHandle.hh>
 #include <task-dispatcher/SchedulerConfig.hh>
 #include <task-dispatcher/common/system_info.hh>
 #include <task-dispatcher/container/ChaseLevQueue.hh>
