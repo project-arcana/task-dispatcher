@@ -48,10 +48,7 @@ struct alignas(NumBytesL1Cacheline) TTask
     }
 
     // From function pointer and userdata void*
-    explicit TTask(cc::function_ptr<void(void*)> func_ptr, void* pThreadStartstopFunc_Userdata = nullptr)
-    {
-        initWithFunction(func_ptr, pThreadStartstopFunc_Userdata);
-    }
+    explicit TTask(cc::function_ptr<void(void*)> pFunction, void* pUserdata = nullptr) { initWithFunction(pFunction, pUserdata); }
 
     // From a lambda of the form void(Args...)
     template <class T, cc::enable_if<std::is_invocable_r_v<void, T, Args...> && std::is_class_v<T>> = true>
